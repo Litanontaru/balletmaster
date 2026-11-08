@@ -35,7 +35,7 @@ class ContextImpl(
 
     override fun enterGate() = store.inc(key + "gate")
 
-    override fun idempotencyGate(): Result<Boolean> = store.set(key + "status", Unit to Unit)
+    override fun idempotencyGate(): Result<Boolean> = store.set(key + "status", null to null)
 
     override fun setOutput(value: Any, status: StepStatus) = store.set(key + "output", value) + { store.set(key + "status", status) }
 
@@ -53,16 +53,16 @@ class ContextImpl(
         if (call == null) {
             Try.state(NO_CALL)
         } else {
-            store.set(key + "timeout", Unit to currentTimeMillis() + timeout) + {
+            store.set(key + "timeout", null to currentTimeMillis() + timeout) + {
                 if (it) Result.success(it)
                 else store.set(key + "timeout", lessThen(currentTimeMillis()) to (currentTimeMillis() + timeout))
             } and {
                 if (it) {
                     try {
                         val res = action()
-                        store.set(key + "timeout", Unit) and res
+                        store.set(key + "timeout", null) and res
                     } catch (e: Throwable) {
-                        store.set(key + "timeout", Unit) and Try.failure(e)
+                        store.set(key + "timeout", null) and Try.failure(e)
                     }
                 } else {
                     Try.state(BLOCKED)

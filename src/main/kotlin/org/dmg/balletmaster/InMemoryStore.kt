@@ -2,8 +2,8 @@ package org.dmg.balletmaster
 
 import java.util.concurrent.ConcurrentHashMap
 
-infix fun Any.accept(another: Any?) = when (this) {
-    is Unit -> another == null
+infix fun Any?.accept(another: Any?) = when (this) {
+    null -> another == null
     is Value -> another?.let { this.evaluate(it) } ?: false
     else -> another == this
 }
@@ -11,12 +11,12 @@ infix fun Any.accept(another: Any?) = when (this) {
 class InMemoryStore : Store {
     private val map = ConcurrentHashMap<String, Any?>()
 
-    override fun set(key: String, valueChange: Pair<Any, Any>): Result<Boolean> {
+    override fun set(key: String, valueChange: Pair<Any?, Any?>): Result<Boolean> {
         var result = false
         map.compute(key) { _, current ->
             result = valueChange.first accept current
             if (result) {
-                if (valueChange.second == Unit) null else valueChange.second
+                valueChange.second
             } else {
                 current
             }
@@ -24,8 +24,8 @@ class InMemoryStore : Store {
         return Result.success(result)
     }
 
-    override fun set(key: String, value: Any): Result<Boolean> {
-        if (value == Unit) {
+    override fun set(key: String, value: Any?): Result<Boolean> {
+        if (value == null) {
             map.remove(key)
         } else {
             map.put(key, value)

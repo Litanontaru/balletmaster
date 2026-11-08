@@ -39,7 +39,7 @@ class ValueTest {
         val now = 10_000L
 
         // Initial state: no lock present (null), acquired by worker 1
-        val acquireResult = store.set(key, Unit to (now + 1000L))
+        val acquireResult = store.set(key, null to (now + 1000L))
         assertTrue(acquireResult.isSuccess && acquireResult.getOrThrow())
 
         // Worker 2 attempts to steal active lease (lease is 11_000L, current time is 10_500L) -> must fail

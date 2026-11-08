@@ -10,22 +10,22 @@ interface Store {
      *
      * @param key the storage key to update.
      * @param valueChange a pair of `(expectedCondition to newValue)`:
-     *   - `first`: the expectation predicate. If [Unit], expects the key to be absent (`null`).
+     *   - `first`: the expectation predicate. If `null`, expects the key to be absent in the store.
      *     If [Value], invokes [Value.evaluate]. Otherwise, performs equality check (`current == expected`).
-     *   - `second`: the new value to store if the predicate matches. If [Unit], removes the key.
+     *   - `second`: the new value to store if the predicate matches. If `null`, removes the key.
      * @return [Result.success] with `true` if condition matched and value was updated;
      *   `false` if condition did not match; or [Result.failure] on storage error.
      */
-    fun set(key: String, valueChange: Pair<Any, Any>): Result<Boolean>
+    fun set(key: String, valueChange: Pair<Any?, Any?>): Result<Boolean>
 
     /**
-     * Unconditionally sets [value] under [key].
+     * Unconditionally sets [value] under [key]. If [value] is `null`, removes the key.
      *
      * @param key the storage key.
-     * @param value the value to store. Note that in current implementations, [Unit] acts as a deletion signal.
+     * @param value the value to store, or `null` to remove the key.
      * @return [Result.success] with `true`, or [Result.failure] on storage error.
      */
-    fun set(key: String, value: Any): Result<Boolean>
+    fun set(key: String, value: Any?): Result<Boolean>
 
     /**
      * Atomically increments an integer counter associated with [key].
