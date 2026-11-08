@@ -20,8 +20,9 @@ class CallContextManager(
     fun off() {
         store.get()?.also {
             if (it.isReplay) {
-                store.set(it.off())
-                replayOffListener(it)
+                val new = it.off()
+                store.set(new)
+                replayOffListener(new)
             }
         }
     }

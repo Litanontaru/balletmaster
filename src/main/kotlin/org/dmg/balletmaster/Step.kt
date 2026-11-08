@@ -21,7 +21,6 @@ class Step<T : Any>(
         }
     }
 
-
     infix fun <R : Any> map(next: (Context, T) -> R) = Step(stepId, context) {
         action() map { input ->
             context.idempotencyGate() and {
