@@ -1,0 +1,48 @@
+package org.dmg.balletmaster
+
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Test
+
+class TryTest {
+    @Test
+    fun stateEquality() {
+        val state1 = Try.state<String>(TechStatus.SKIP)
+        val state2 = Try.state<String>(TechStatus.SKIP)
+        val state3 = Try.state<String>(TechStatus.BLOCKED)
+
+        assertEquals(state1, state2)
+        assertEquals(state1.hashCode(), state2.hashCode())
+        assertNotEquals(state1, state3)
+        assertTrue(state1.isState)
+        assertFalse(state1.isSuccess)
+        assertFalse(state1.isFailure)
+    }
+
+    @Test
+    fun successEquality() {
+        val success1 = Try.success("test")
+        val success2 = Try.success("test")
+        val success3 = Try.success("other")
+
+        assertEquals(success1, success2)
+        assertEquals(success1.hashCode(), success2.hashCode())
+        assertNotEquals(success1, success3)
+        assertTrue(success1.isSuccess)
+        assertFalse(success1.isState)
+        assertFalse(success1.isFailure)
+    }
+
+    @Test
+    fun failureEquality() {
+        val exception = RuntimeException("error")
+        val failure1 = Try.failure<String>(exception)
+        val failure2 = Try.failure<String>(exception)
+
+        assertEquals(failure1, failure2)
+        assertEquals(failure1.hashCode(), failure2.hashCode())
+        assertNotEquals(failure1, Try.failure<String>(RuntimeException("other")))
+        assertTrue(failure1.isFailure)
+        assertFalse(failure1.isSuccess)
+        assertFalse(failure1.isState)
+    }
+}

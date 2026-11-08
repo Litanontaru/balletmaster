@@ -46,7 +46,7 @@ class Try<out T>(private val value: Any?) : Serializable {
     }
 
     internal class State(val status: Value) : Serializable {
-        override fun equals(other: Any?): Boolean = other is Failure && status == other.exception
+        override fun equals(other: Any?): Boolean = other is State && status == other.status
         override fun hashCode(): Int = status.hashCode()
         override fun toString(): String = "State($status)"
     }
