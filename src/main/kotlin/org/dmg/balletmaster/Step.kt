@@ -44,6 +44,12 @@ class Step<T : Any>(
         }
     }
 
+    infix fun milestone(milestone: (Context, T) -> Any) = Step(stepId, context) {
+        action() also { input ->
+            context.setSuffix(milestone(context, input))
+        }
+    }
+
     fun checkPoint() = Step(stepId, context) {
         val output = action()
         if (output.isState) {

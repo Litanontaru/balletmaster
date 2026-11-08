@@ -3,10 +3,12 @@ package org.dmg.balletmaster
 data class CallContext(
     val operationName: Any,
     val operationId: Any,
+    val operationSuffix: Any = "",
 
-    val isReplay: Boolean,
-    val attempt: Int
+    val isReplay: Boolean = false,
+    val attempt: Int = 0
 ) {
-    fun replay() = CallContext(operationName, operationId, true, attempt + 1)
-    fun off() = CallContext(operationName, operationId, false, attempt)
+    fun replay() = CallContext(operationName, operationId, operationSuffix, true, attempt + 1)
+    fun off() = CallContext(operationName, operationId, operationSuffix, false, attempt)
+    fun withSuffix(operationSuffix: Any) = CallContext(operationName, operationId, operationSuffix, isReplay, attempt)
 }

@@ -6,7 +6,16 @@ class BalletMaster(
     private val callContextManager: CallContextManager,
 ) {
     fun start() =
-        Step(DefaultStep, ContextImpl(store, clientId, callContextManager::get, callContextManager::off)) {
+        Step(
+            DefaultStep,
+            ContextImpl(
+                store,
+                clientId,
+                callContextManager::get,
+                callContextManager::off,
+                callContextManager::setSuffix
+            )
+        ) {
             Try.success(Unit)
         }
 }

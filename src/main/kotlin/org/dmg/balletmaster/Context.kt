@@ -2,6 +2,8 @@ package org.dmg.balletmaster
 
 interface Context {
     fun isDone(stepId: StepId): Boolean
+    val operationSuffix: Any
+    val suffix: Any get() = operationSuffix
 }
 
 interface InternalContext: Context {
@@ -10,6 +12,7 @@ interface InternalContext: Context {
     fun enterGate(): Result<Boolean>
     fun idempotencyGate(): Result<Boolean>
     fun setOutput(value: Try<Any>): Result<Boolean>
+    fun setSuffix(suffix: Any)
 
     //REPLAY
 

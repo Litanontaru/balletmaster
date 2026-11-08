@@ -101,7 +101,7 @@ class StoreTest {
         assertEquals(1, stepExecutionCount.get())
 
         // Verify Unit output is actually stored under the checkpoint key as Try
-        val storedOutput = store.get<Try<Unit>>("client:op:0:200:NOTIFY_STEP:output")
+        val storedOutput = store.get<Try<Unit>>("client:op:200:0::NOTIFY_STEP:output")
         assertTrue(storedOutput.isSuccess)
         assertEquals(Try.success(Unit), storedOutput.getOrThrow())
 
