@@ -58,4 +58,55 @@ class ValueTest {
         val updatedLease = store.get<Long>(key).getOrThrow()
         assertEquals(expiredTime + 1000L, updatedLease)
     }
+
+    @Test
+    fun notEvaluateWithValue() {
+        val notDone = !StepStatus.DONE
+
+        // Matches values that are not StepStatus.DONE
+        assertTrue(notDone.evaluate(StepStatus.EXCEPTION))
+        assertTrue(notDone.evaluate("SOME_OTHER_STATUS"))
+
+        // Does not match StepStatus.DONE
+        assertFalse(notDone.evaluate(StepStatus.DONE))
+    }
+
+    @Test
+    fun notEvaluateWithRawAny() {
+        val notString = Not("ACTIVE")
+
+        assertTrue(notString.evaluate("INACTIVE"))
+        assertFalse(notString.evaluate("ACTIVE"))
+    }
+
+    @Test
+    fun notWithLessThen() {
+        // Not less than 100 means >= 100
+        val notLessThan100 = !lessThen(100)
+
+        assertTrue(notLessThan100.evaluate(150))
+        assertTrue(notLessThan100.evaluate(100))
+        assertFalse(notLessThan100.evaluate(50))
+    }
+
+    @Test
+    fun notEqualsAndHashCode() {
+        val notDone1 = !StepStatus.DONE
+        val notDone2 = Not(StepStatus.DONE)
+        val notException = !StepStatus.EXCEPTION
+
+        assertEquals(notDone1, notDone2)
+        assertEquals(notDone1.hashCode(), notDone2.hashCode())
+        assertNotEquals(notDone1, notException)
+        assertEquals("!DONE", notDone1.toString())
+    }
+
+    @Test
+    fun notInStoreAccept() {
+        val notDone = !StepStatus.DONE
+
+        assertTrue(notDone accept StepStatus.EXCEPTION)
+        assertFalse(notDone accept StepStatus.DONE)
+        assertFalse(notDone accept null)
+    }
 }

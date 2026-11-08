@@ -9,7 +9,12 @@ interface Value : Serializable {
 }
 
 class Not(val original: Any): Value {
-    override fun evaluate(another: Any): Boolean = this != another
+    override fun evaluate(another: Any): Boolean =
+        if (original is Value) !original.evaluate(another) else original != another
+
+    override fun equals(other: Any?): Boolean = other is Not && original == other.original
+    override fun hashCode(): Int = original.hashCode() * 31
+    override fun toString(): String = "!$original"
 }
 
 class LessThen<T : Comparable<T>>(private val original: T) : Value {
