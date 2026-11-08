@@ -60,20 +60,40 @@ class ContextImpl(
         if (call == null) {
             Try.state(NO_CALL)
         } else {
-            store.set(key + "timeout", null to currentTimeMillis() + timeout) + {
-                if (it) Result.success(it)
-                else store.set(key + "timeout", lessThen(currentTimeMillis()) to (currentTimeMillis() + timeout))
-            } and {
-                if (it) {
-                    try {
-                        val res = action()
-                        store.set(key + "timeout", null) and res
-                    } catch (e: Throwable) {
-                        store.set(key + "timeout", null) and Try.failure(e)
-                    }
-                } else {
-                    Try.state(BLOCKED)
+            val deadline = currentTimeMillis() + timeout
+            var acquired = false
+
+            while (currentTimeMillis() <= deadline) {
+                val now = currentTimeMillis()
+                val leaseUntil = now + timeout
+
+                val lockResult = store.set(key + "timeout", null to leaseUntil) + {
+                    if (it) Result.success(it)
+                    else store.set(key + "timeout", lessThen(now) to leaseUntil)
                 }
+
+                if (lockResult.fold({ it }, { false })) {
+                    acquired = true
+                    break
+                }
+
+                try {
+                    Thread.sleep(10)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+
+            if (acquired) {
+                try {
+                    val res = action()
+                    store.set(key + "timeout", null) and res
+                } catch (e: Throwable) {
+                    store.set(key + "timeout", null) and Try.failure(e)
+                }
+            } else {
+                Try.state(BLOCKED)
             }
         }
 }
