@@ -8,9 +8,11 @@ import java.lang.System.currentTimeMillis
 class ContextImpl(
     private val store: Store,
     private val clientId: Any,
-    private val call: CallContext?,
+    private val callProvider: () -> CallContext?,
     private val off: () -> Unit
 ) : InternalContext {
+    private val call: CallContext? get() = callProvider()
+
     private val timeout = 1000L
 
     private var stepId: StepId = DefaultStep
