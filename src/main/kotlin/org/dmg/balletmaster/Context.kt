@@ -9,12 +9,11 @@ interface InternalContext: Context {
     fun setInput(value: Any): Result<Boolean>
     fun enterGate(): Result<Boolean>
     fun idempotencyGate(): Result<Boolean>
-    fun setOutput(value: Any, status: StepStatus): Result<Boolean>
+    fun setOutput(value: Try<Any>): Result<Boolean>
 
     //REPLAY
 
-    fun <R> originalOutput(): Result<R?>
-    fun originalStatus(): Result<StepStatus?>
+    fun <R : Any> originalOutput(): Result<Try<R>?>
     fun isReplay(): Boolean
     fun setPlay()
 

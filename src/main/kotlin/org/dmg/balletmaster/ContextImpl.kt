@@ -1,6 +1,5 @@
 package org.dmg.balletmaster
 
-import org.dmg.balletmaster.StepStatus.DONE
 import org.dmg.balletmaster.TechStatus.BLOCKED
 import org.dmg.balletmaster.TechStatus.NO_CALL
 import java.lang.System.currentTimeMillis
@@ -25,7 +24,7 @@ class ContextImpl(
 
     private val originalKey: String get() = aKey(stepId, call?.attempt?.takeIf { it >0 }?.let { it -1 })
 
-    override fun isDone(stepId: StepId) = store.get<StepStatus>(key(stepId) + "status").fold({ it == DONE }, { false })
+    override fun isDone(stepId: StepId) = store.get<Try<*>>(key(stepId) + "output").fold({ it?.isSuccess == true }, { false })
 
     override fun setStep(stepId: StepId) {
         this.stepId = stepId
@@ -35,13 +34,11 @@ class ContextImpl(
 
     override fun enterGate() = store.inc(key + "gate")
 
-    override fun idempotencyGate(): Result<Boolean> = store.set(key + "status", null to null)
+    override fun idempotencyGate(): Result<Boolean> = store.set(key + "output", null to null)
 
-    override fun setOutput(value: Any, status: StepStatus) = store.set(key + "output", value) + { store.set(key + "status", status) }
+    override fun setOutput(value: Try<Any>) = store.set(key + "output", value)
 
-    override fun <R> originalOutput() = store.get<R & Any>(originalKey + "output")
-
-    override fun originalStatus(): Result<StepStatus?> = store.get(originalKey + "status")
+    override fun <R : Any> originalOutput(): Result<Try<R>?> = store.get(originalKey + "output")
 
     override fun isReplay() = call?.isReplay ?: false
 

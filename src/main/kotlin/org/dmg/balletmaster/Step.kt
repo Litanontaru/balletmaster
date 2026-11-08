@@ -1,9 +1,11 @@
 package org.dmg.balletmaster
 
+import org.dmg.balletmaster.TechStatus.SKIP
+
 class Step<T : Any>(
     private val stepId: StepId,
     private val context: InternalContext,
-    internal val action: () -> Try<T>
+    internal val action: () -> Try<T>,
 ) {
     infix fun <R : Any> input(value: R) = Step(stepId, context) {
         action() map { context.setInput(value) and { Try.success(value) } }
@@ -15,7 +17,7 @@ class Step<T : Any>(
                 if (gate(context, input)) {
                     Try.success(input)
                 } else {
-                    Try.state(TechStatus.SKIP)
+                    Try.state(SKIP)
                 }
             }
         }
@@ -24,37 +26,31 @@ class Step<T : Any>(
     infix fun <R : Any> map(next: (Context, T) -> R) = Step(stepId, context) {
         action() map { input ->
             context.idempotencyGate() and {
-                fun execute() = try {
-                    Try.success(next(context, input))
-                } catch (e: Throwable) {
-                    Try.failure(e)
-                } finally {
-                    context.setPlay()
-                }
-
-                if (context.isReplay()) {
-                    context.originalStatus() and {
-                        when (it) {
-                            StepStatus.DONE -> context.originalOutput<R>().notNull() and Try.Companion::success
-                            StepStatus.EXCEPTION -> context.originalOutput<Throwable>().notNull() and Try.Companion::failure
-                            else -> execute()
-                        }
+                if (it) {
+                    fun execute() = try {
+                        Try.success(next(context, input))
+                    } catch (e: Throwable) {
+                        Try.failure(e)
+                    } finally {
+                        context.setPlay()
                     }
-                } else execute()
+
+                    if (context.isReplay()) context.originalOutput<R>() and { original -> original ?: execute() }
+                    else execute()
+                } else {
+                    Try.state(SKIP)
+                }
             }
         }
     }
 
     fun checkPoint() = Step(stepId, context) {
-        action().fold(
-            { exception ->
-                context.setOutput(exception, StepStatus.EXCEPTION).fold({ Try.failure(exception) }, Try.Companion::failure)
-            },
-            Try.Companion::state,
-            { output ->
-                context.setOutput(output, StepStatus.DONE).fold({ Try.success(output) }, Try.Companion::failure)
-            }
-        )
+        val output = action()
+        if (output.isState) {
+            output
+        } else {
+            context.setOutput(output).fold({ output }, Try.Companion::failure)
+        }
     }
 
     infix fun step(stepId: StepId): Step<T> {

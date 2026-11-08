@@ -100,10 +100,10 @@ class StoreTest {
         assertEquals(Try.success(Unit), resultAttempt0)
         assertEquals(1, stepExecutionCount.get())
 
-        // Verify Unit output is actually stored under the checkpoint key
-        val storedOutput = store.get<Unit>("client:op:0:200:NOTIFY_STEP:output")
+        // Verify Unit output is actually stored under the checkpoint key as Try
+        val storedOutput = store.get<Try<Unit>>("client:op:0:200:NOTIFY_STEP:output")
         assertTrue(storedOutput.isSuccess)
-        assertEquals(Unit, storedOutput.getOrThrow())
+        assertEquals(Try.success(Unit), storedOutput.getOrThrow())
 
         // Attempt 1: Replay the workflow.
         // It should read the cached Unit output without throwing NullPointerException!
