@@ -15,7 +15,7 @@ class Not(val original: Any): Value {
 class LessThen<T : Comparable<T>>(private val original: T) : Value {
     private val type = original.javaClass
 
-    override fun evaluate(another: Any): Boolean = type.isInstance(another) && original < type.cast(another)
+    override fun evaluate(another: Any): Boolean = type.isInstance(another) && type.cast(another) < original
 }
 
 fun <T : Comparable<T>> lessThen(value: T) = LessThen(value)
