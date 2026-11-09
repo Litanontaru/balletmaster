@@ -171,6 +171,11 @@ class StateConfigTest {
                 val found = savedConfigs.firstOrNull { it.operationName == operationName && it.version == version } as? StateConfig<S, STATE>
                 return Result.success(found)
             }
+
+            override fun getVersions(operationName: String): Result<List<String>> {
+                val versions = savedConfigs.filter { it.operationName == operationName }.map { it.version }
+                return Result.success(versions)
+            }
         }
 
         val balletMaster = BalletMaster(
