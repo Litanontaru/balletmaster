@@ -11,12 +11,6 @@ class BalletMaster(
     private val callContextManager: CallContextManager,
     private val stateConfigRepository: StateConfigRepository = StoreStateConfigRepository(store)
 ) {
-    fun <S : StepId, STATE : Any> defineStates(
-        operationName: String,
-        version: String,
-        init: StateConfigBuilder<S, STATE>.() -> Unit
-    ): StateConfig<S, STATE> = processStates(operationName, version, init).also { stateConfigRepository.save(it) }
-
     fun start() =
         Step(
             DefaultStep,
@@ -29,4 +23,10 @@ class BalletMaster(
         ) {
             Try.success(Unit)
         }
+
+    fun <S : StepId, STATE : Any> defineStates(
+        operationName: String,
+        version: String,
+        init: StateConfigBuilder<S, STATE>.() -> Unit
+    ): StateConfig<S, STATE> = processStates(operationName, version, init).also { stateConfigRepository.save(it) }
 }
