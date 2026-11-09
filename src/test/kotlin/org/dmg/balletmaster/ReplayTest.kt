@@ -31,11 +31,13 @@ class ReplayTest {
     @Test
     fun workflowReplayTransitionsToPlayAfterExecution() {
         val replayOffTriggered = AtomicBoolean(false)
-        val callContextManager = CallContextManager { updatedContext ->
-            if (!updatedContext.isReplay) {
-                replayOffTriggered.set(true)
+        val callContextManager = CallContextManager(
+            replayOffListener = { updatedContext ->
+                if (!updatedContext.isReplay) {
+                    replayOffTriggered.set(true)
+                }
             }
-        }
+        )
         val store = InMemoryStore()
         val balletMaster = BalletMaster("client", store, callContextManager)
 
