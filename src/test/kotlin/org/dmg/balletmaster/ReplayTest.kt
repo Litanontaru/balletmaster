@@ -17,7 +17,6 @@ class ReplayTest {
         var call = CallContext("op", "1", isReplay = true, attempt = 1)
         val context = ContextImpl(
             store = InMemoryStore(),
-            clientId = "test-client",
             callProvider = { call },
             off = { call = call.off() }
         )
@@ -39,7 +38,7 @@ class ReplayTest {
             }
         )
         val store = InMemoryStore()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         // Attempt 0: execute STEP_A, checkpointing output "AB"
         callContextManager.store("op", "100", isReplay = false, attempt = 0)

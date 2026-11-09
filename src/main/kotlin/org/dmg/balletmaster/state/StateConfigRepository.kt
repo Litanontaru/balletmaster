@@ -15,7 +15,6 @@ interface StateConfigRepository {
 }
 
 class StoreStateConfigRepository(
-    private val clientId: Any,
     private val store: Store,
     private val serializer: StateConfigSerializer = StateConfigSerializer()
 ) : StateConfigRepository {
@@ -38,7 +37,7 @@ class StoreStateConfigRepository(
     }
 
     private fun configKey(operationName: String, version: String) =
-        "${clientId}:config:${operationName}:${version}"
+        "config:${operationName}:${version}"
 }
 
 inline fun <reified S : StepId, reified STATE : Any> StateConfigRepository.get(

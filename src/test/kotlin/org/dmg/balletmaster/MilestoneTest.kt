@@ -21,7 +21,7 @@ class MilestoneTest {
     fun sequentialPaginationLoop() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         val processedPages = mutableListOf<Int>()
 
@@ -80,15 +80,15 @@ class MilestoneTest {
         assertEquals(listOf(1, 2, 3), processedPages)
 
         // 2. All 3 loop iterations have isolated keys in Store:
-        val page1 = store.get<Try<PageData>>("client:batchOp:101:0::FETCH_PAGE:output")
+        val page1 = store.get<Try<PageData>>("batchOp:101:0::FETCH_PAGE:output")
         assertTrue(page1.isSuccess)
         assertEquals(Try.success(PageData(1, isLast = false)), page1.getOrThrow())
 
-        val page2 = store.get<Try<PageData>>("client:batchOp:101:0:page_2:FETCH_PAGE:output")
+        val page2 = store.get<Try<PageData>>("batchOp:101:0:page_2:FETCH_PAGE:output")
         assertTrue(page2.isSuccess)
         assertEquals(Try.success(PageData(2, isLast = false)), page2.getOrThrow())
 
-        val page3 = store.get<Try<PageData>>("client:batchOp:101:0:page_3:FETCH_PAGE:output")
+        val page3 = store.get<Try<PageData>>("batchOp:101:0:page_3:FETCH_PAGE:output")
         assertTrue(page3.isSuccess)
         assertEquals(Try.success(PageData(3, isLast = true)), page3.getOrThrow())
 
@@ -105,7 +105,7 @@ class MilestoneTest {
     fun singleWorkflowSpiralLoop() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         callContextManager.store("spiralOp", "101", isReplay = false, attempt = 0)
 
@@ -143,12 +143,12 @@ class MilestoneTest {
 
         // Verify keys in Store:
         // 1. Iteration 0 keys (suffix "")
-        val iter0StepA = store.get<Try<String>>("client:spiralOp:101:0::STEP_A:output")
+        val iter0StepA = store.get<Try<String>>("spiralOp:101:0::STEP_A:output")
         assertTrue(iter0StepA.isSuccess)
         assertEquals(Try.success("start-A0"), iter0StepA.getOrThrow())
 
         // 2. Iteration 1 keys (suffix "iter-1")
-        val iter1StepA = store.get<Try<String>>("client:spiralOp:101:0:iter-1:STEP_A:output")
+        val iter1StepA = store.get<Try<String>>("spiralOp:101:0:iter-1:STEP_A:output")
         assertTrue(iter1StepA.isSuccess)
         assertEquals(Try.success("start-A0-A1"), iter1StepA.getOrThrow())
     }
@@ -160,7 +160,7 @@ class MilestoneTest {
         val callContextManager = CallContextManager(
             suffixListener = { call -> notifiedSuffix.set(call.operationSuffix.toString()) }
         )
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         callContextManager.store("chainedOp", "102", isReplay = false, attempt = 0)
 
@@ -193,7 +193,7 @@ class MilestoneTest {
                 notifiedSuffix.set(updatedCall.operationSuffix.toString())
             }
         )
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         // --- Kafka Consumer 1: processes Iteration 0 and triggers milestone ---
         callContextManager.store("distributedOp", "202", isReplay = false, attempt = 0, operationSuffix = "")
@@ -245,9 +245,9 @@ class MilestoneTest {
         assertEquals(Try.success("payload-1-batch2-done"), consumer2Result)
 
         // Verify isolation in store
-        val stepA0 = store.get<Try<String>>("client:distributedOp:202:0::STEP_A:output")
-        val stepABatch2 = store.get<Try<String>>("client:distributedOp:202:0:batch-2:STEP_A:output")
-        val stepBBatch2 = store.get<Try<String>>("client:distributedOp:202:0:batch-2:STEP_B:output")
+        val stepA0 = store.get<Try<String>>("distributedOp:202:0::STEP_A:output")
+        val stepABatch2 = store.get<Try<String>>("distributedOp:202:0:batch-2:STEP_A:output")
+        val stepBBatch2 = store.get<Try<String>>("distributedOp:202:0:batch-2:STEP_B:output")
 
         assertEquals(Try.success("payload-0-processed"), stepA0.getOrThrow())
         assertEquals(Try.success("payload-1-batch2"), stepABatch2.getOrThrow())
@@ -258,7 +258,7 @@ class MilestoneTest {
     fun milestoneCalculatesNextSuffixIncrementally() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         callContextManager.store("counterOp", "404", isReplay = false, attempt = 0, operationSuffix = "iter_1")
 

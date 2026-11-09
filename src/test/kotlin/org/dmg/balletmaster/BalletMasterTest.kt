@@ -14,7 +14,7 @@ class BalletMasterTest {
     fun executeOne() {
         val callContextManager = CallContextManager({ println("replay off") })
         val store = InMemoryStore()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         callContextManager.store("operation", "11", false, 0)
 

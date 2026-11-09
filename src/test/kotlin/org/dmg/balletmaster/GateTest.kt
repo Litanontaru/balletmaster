@@ -35,7 +35,7 @@ class GateTest {
     fun concurrentForkJoinChoreography() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         val joinExecutionCount = AtomicInteger(0)
         val workerAResult = AtomicReference<Try<String>>()
@@ -150,12 +150,12 @@ class GateTest {
         assertEquals(1, joinExecutionCount.get(), "Join step must execute exactly once")
 
         // 4. Both workers passed through gate counter (store.inc was called twice)
-        val gateCounter = store.get<Int>("client:forkJoinOp:100:0::JOIN_STEP:gate")
+        val gateCounter = store.get<Int>("forkJoinOp:100:0::JOIN_STEP:gate")
         assertTrue(gateCounter.isSuccess)
         assertEquals(2, gateCounter.getOrThrow(), "Gate counter in store must record both activations")
 
         // 5. Output in store is properly saved
-        val storedJoinOutput = store.get<Try<String>>("client:forkJoinOp:100:0::JOIN_STEP:output")
+        val storedJoinOutput = store.get<Try<String>>("forkJoinOp:100:0::JOIN_STEP:output")
         assertTrue(storedJoinOutput.isSuccess)
         assertEquals(Try.success("joined-payload"), storedJoinOutput.getOrThrow())
     }
@@ -175,7 +175,7 @@ class GateTest {
     fun highConcurrencyMassiveRaceOnGate() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         val threadCount = 20
         val startLatch = CountDownLatch(1)
@@ -233,12 +233,12 @@ class GateTest {
         assertEquals(threadCount - 1, stateCount, "All other threads must receive technical status")
 
         // 4. All 20 threads atomically incremented the gate counter in Store
-        val gateCount = store.get<Int>("client:raceOp:200:0::TARGET_STEP:gate")
+        val gateCount = store.get<Int>("raceOp:200:0::TARGET_STEP:gate")
         assertTrue(gateCount.isSuccess)
         assertEquals(threadCount, gateCount.getOrThrow(), "Store must record 20 gate entries")
 
         // 5. Checkpoint is properly persisted in Store
-        val storedOutput = store.get<Try<String>>("client:raceOp:200:0::TARGET_STEP:output")
+        val storedOutput = store.get<Try<String>>("raceOp:200:0::TARGET_STEP:output")
         assertTrue(storedOutput.isSuccess)
         assertEquals(Try.success("race-input-winner"), storedOutput.getOrThrow())
     }
@@ -254,7 +254,7 @@ class GateTest {
     fun gateBlocksUntilPrerequisiteCompleted() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
 
         val stepBExecutions = AtomicInteger(0)
 
@@ -304,7 +304,7 @@ class GateTest {
         assertEquals(1, stepBExecutions.get())
 
         // Gate counter recorded 2 entries (phase 1 and phase 3)
-        val gateCounter = store.get<Int>("client:staggeredOp:300:0::STEP_B:gate")
+        val gateCounter = store.get<Int>("staggeredOp:300:0::STEP_B:gate")
         assertEquals(2, gateCounter.getOrThrow())
 
         callContextManager.clear()

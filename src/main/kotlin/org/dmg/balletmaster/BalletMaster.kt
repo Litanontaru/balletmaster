@@ -7,10 +7,9 @@ import org.dmg.balletmaster.state.StoreStateConfigRepository
 import org.dmg.balletmaster.state.processStates
 
 class BalletMaster(
-    private val clientId: Any,
     private val store: Store,
     private val callContextManager: CallContextManager,
-    private val stateConfigRepository: StateConfigRepository = StoreStateConfigRepository(clientId, store)
+    private val stateConfigRepository: StateConfigRepository = StoreStateConfigRepository(store)
 ) {
     fun <S : StepId, STATE : Any> defineStates(
         operationName: String,
@@ -23,7 +22,6 @@ class BalletMaster(
             DefaultStep,
             ContextImpl(
                 store,
-                clientId,
                 callContextManager::get,
                 callContextManager::off,
                 callContextManager::setSuffix

@@ -78,7 +78,7 @@ class StoreTest {
     fun workflowStepReturningUnitCheckpointsAndReplaysWithoutCrash() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager {}
-        val balletMaster = BalletMaster("client", store, callContextManager)
+        val balletMaster = BalletMaster(store, callContextManager)
         val stepExecutionCount = AtomicInteger(0)
 
         // Attempt 0: execute a side-effect step returning Unit
@@ -101,7 +101,7 @@ class StoreTest {
         assertEquals(1, stepExecutionCount.get())
 
         // Verify Unit output is actually stored under the checkpoint key as Try
-        val storedOutput = store.get<Try<Unit>>("client:op:200:0::NOTIFY_STEP:output")
+        val storedOutput = store.get<Try<Unit>>("op:200:0::NOTIFY_STEP:output")
         assertTrue(storedOutput.isSuccess)
         assertEquals(Try.success(Unit), storedOutput.getOrThrow())
 

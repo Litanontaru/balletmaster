@@ -125,8 +125,7 @@ class StateConfigTest {
     @Test
     fun `balletmaster persistence to store and supervisor reload`() {
         val store = InMemoryStore()
-        val clientId = "tenant-1"
-        val balletMaster = BalletMaster(clientId, store, CallContextManager())
+        val balletMaster = BalletMaster(store, CallContextManager())
 
         // 1. Define states on worker node via facade
         val config = balletMaster.defineStates<TestSteps, TestStatus>("order-flow", "v1.0") {
@@ -138,11 +137,11 @@ class StateConfigTest {
         assertNotNull(config)
 
         // 2. Verify stored in store
-        val storedJson = store.get<String>("tenant-1:config:order-flow:v1.0").fold({ it }, { null })
+        val storedJson = store.get<String>("config:order-flow:v1.0").fold({ it }, { null })
         assertNotNull(storedJson)
 
         // 3. Supervisor reads directly from StateConfigRepository
-        val supervisorRepo = StoreStateConfigRepository(clientId, store)
+        val supervisorRepo = StoreStateConfigRepository(store)
         val supervisorConfig = supervisorRepo.get<TestSteps, TestStatus>("order-flow", "v1.0").getOrThrow()
         assertNotNull(supervisorConfig)
         assertEquals("order-flow", supervisorConfig!!.operationName)
@@ -175,7 +174,6 @@ class StateConfigTest {
         }
 
         val balletMaster = BalletMaster(
-            clientId = "tenant-custom",
             store = InMemoryStore(),
             callContextManager = CallContextManager(),
             stateConfigRepository = mockRepo
@@ -225,8 +223,7 @@ class StateConfigTest {
     @Test
     fun `cross-domain supervisor perspectives on shared execution facts`() {
         val store = InMemoryStore()
-        val clientId = "store-client"
-        val balletMaster = BalletMaster(clientId, store, CallContextManager())
+        val balletMaster = BalletMaster(store, CallContextManager())
 
         // Domain 1: Order Supervisor Config
         val orderConfig = balletMaster.defineStates<OrderDomainSteps, OrderDomainState>("ecommerce-process", "1.0") {

@@ -6,7 +6,6 @@ import java.lang.System.currentTimeMillis
 
 class ContextImpl(
     private val store: Store,
-    private val clientId: Any,
     private val callProvider: () -> CallContext?,
     private val off: () -> Unit,
     private val onSetSuffix: (Any) -> Unit = {}
@@ -23,7 +22,7 @@ class ContextImpl(
     private fun key(stepId: StepId) = aKey(stepId, call?.attempt, stepSuffix)
 
     private fun aKey(stepId: StepId, attempt: Int?, suffix: Any) =
-        "${clientId}:${call?.operationName}:${call?.operationId}:${attempt}:${suffix}:${stepId}:"
+        "${call?.operationName}:${call?.operationId}:${attempt}:${suffix}:${stepId}:"
 
     private val key: String get() = key(stepId)
 
