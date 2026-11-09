@@ -1,4 +1,4 @@
-package org.dmg.balletmaster
+package org.dmg.balletmaster.store
 
 /**
  * Key-value storage abstraction providing atomic operations, conditional updates,

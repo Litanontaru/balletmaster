@@ -1,5 +1,6 @@
-package org.dmg.balletmaster
+package org.dmg.balletmaster.store
 
+import org.dmg.balletmaster.context.StepStatus
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 

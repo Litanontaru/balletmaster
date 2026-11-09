@@ -1,12 +1,10 @@
 package org.dmg.balletmaster.state
 
 import org.dmg.balletmaster.BalletMaster
-import org.dmg.balletmaster.CallContext
-import org.dmg.balletmaster.CallContextManager
 import org.dmg.balletmaster.Context
-import org.dmg.balletmaster.InMemoryStore
 import org.dmg.balletmaster.StepId
-import org.dmg.balletmaster.Try
+import org.dmg.balletmaster.context.CallContextManager
+import org.dmg.balletmaster.store.InMemoryStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue

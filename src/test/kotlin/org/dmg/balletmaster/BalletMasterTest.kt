@@ -1,11 +1,13 @@
 package org.dmg.balletmaster
 
+import org.dmg.balletmaster.context.CallContextManager
+import org.dmg.balletmaster.store.InMemoryStore
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-import org.junit.jupiter.api.Assertions.*
-
 class BalletMasterTest {
-    enum class MyStepId: StepId {
+    enum class MyStepId : StepId {
         STEP_A,
         STEP_B
     }
@@ -25,7 +27,7 @@ class BalletMasterTest {
             .map { _, _ -> "B" }
             .checkPoint()
             .step(MyStepId.STEP_B)
-            .map {_, _ -> "C" }
+            .map { _, _ -> "C" }
             .checkPoint()
             .execute()
 

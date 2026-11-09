@@ -1,5 +1,6 @@
-package org.dmg.balletmaster
+package org.dmg.balletmaster.util
 
+import org.dmg.balletmaster.Try
 import java.lang.NullPointerException
 
 operator fun <T, R> Result<T>.plus(action: (T) -> Result<R>): Result<R> {

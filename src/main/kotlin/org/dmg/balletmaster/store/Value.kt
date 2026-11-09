@@ -1,4 +1,4 @@
-package org.dmg.balletmaster
+package org.dmg.balletmaster.store
 
 import java.io.Serializable
 
@@ -8,7 +8,7 @@ interface Value : Serializable {
     fun evaluate(another: Any): Boolean = this == another
 }
 
-class Not(val original: Any): Value {
+class Not(val original: Any) : Value {
     override fun evaluate(another: Any): Boolean =
         if (original is Value) !original.evaluate(another) else original != another
 
@@ -24,16 +24,3 @@ class LessThen<T : Comparable<T>>(private val original: T) : Value {
 }
 
 fun <T : Comparable<T>> lessThen(value: T) = LessThen(value)
-
-enum class StepStatus : Value {
-    DONE,
-    EXCEPTION
-}
-
-enum class TechStatus : Value {
-    SKIP,
-    BLOCKED,
-    NO_CALL,
-    NO_OP,
-    OLD_EXCEPTION
-}

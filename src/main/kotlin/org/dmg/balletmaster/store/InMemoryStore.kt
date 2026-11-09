@@ -1,4 +1,4 @@
-package org.dmg.balletmaster
+package org.dmg.balletmaster.store
 
 import java.util.concurrent.ConcurrentHashMap
 
@@ -41,6 +41,7 @@ class InMemoryStore : Store {
     }
 
     override fun <T : Any> get(key: String): Result<T?> {
+        @Suppress("UNCHECKED_CAST")
         return Result.success(map.get(key) as T?)
     }
 }

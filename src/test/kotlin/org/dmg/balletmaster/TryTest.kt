@@ -1,5 +1,6 @@
 package org.dmg.balletmaster
 
+import org.dmg.balletmaster.context.TechStatus
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 

@@ -1,9 +1,9 @@
 package org.dmg.balletmaster.state
 
 import org.dmg.balletmaster.StepId
-import org.dmg.balletmaster.Store
 import org.dmg.balletmaster.Try
-import org.dmg.balletmaster.plus
+import org.dmg.balletmaster.store.Store
+import org.dmg.balletmaster.util.plus
 
 /**
  * Supervisor component responsible for inspecting, observing, and resolving

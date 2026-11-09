@@ -1,5 +1,6 @@
 package org.dmg.balletmaster
 
+import org.dmg.balletmaster.store.Value
 import java.io.Serializable
 
 class Try<out T>(private val value: Any?) : Serializable {
@@ -28,10 +29,10 @@ class Try<out T>(private val value: Any?) : Serializable {
     ): R = when (value) {
         is Failure -> onFailure(value.exception)
         is State -> onState(value.status)
-        else -> onSuccess(value as T)
+        else -> onSuccess(@Suppress("UNCHECKED_CAST") (value as T))
     }
 
-    fun <R> then(onSuccess: (value: T) -> Try<R>): Try<R> = fold(::failure, ::state, onSuccess)
+    fun <R> then(onSuccess: (value: T) -> Try<R>): Try<R> = fold(Companion::failure, Companion::state, onSuccess)
 
     companion object {
         fun <T> success(value: T): Try<T> = Try(value)
@@ -61,7 +62,6 @@ infix fun <T, R> Try<T>.map(value: (T) -> Try<R>) = fold(Try.Companion::failure,
     value(it)
 }
 
-infix fun <T, R> Try<T>.and (value: (T) -> Result<R>): Try<R> = fold(Try.Companion::failure, Try.Companion::state) {
+infix fun <T, R> Try<T>.and(value: (T) -> Result<R>): Try<R> = fold(Try.Companion::failure, Try.Companion::state) {
     value(it).fold(Try.Companion::success, Try.Companion::failure)
 }
-

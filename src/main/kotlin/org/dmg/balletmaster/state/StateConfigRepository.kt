@@ -2,8 +2,8 @@ package org.dmg.balletmaster.state
 
 import com.fasterxml.jackson.core.type.TypeReference
 import org.dmg.balletmaster.StepId
-import org.dmg.balletmaster.Store
-import org.dmg.balletmaster.plus
+import org.dmg.balletmaster.store.Store
+import org.dmg.balletmaster.util.plus
 
 interface StateConfigRepository {
     fun <S : StepId, STATE : Any> save(config: StateConfig<S, STATE>): Result<Boolean>
