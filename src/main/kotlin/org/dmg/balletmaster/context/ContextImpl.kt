@@ -1,5 +1,6 @@
 package org.dmg.balletmaster.context
 
+import org.dmg.balletmaster.StepExecutionException
 import org.dmg.balletmaster.StepId
 import org.dmg.balletmaster.Try
 import org.dmg.balletmaster.context.TechStatus.BLOCKED
@@ -93,7 +94,8 @@ class ContextImpl(
                     val res = action()
                     store.set(key + "timeout", null) and res
                 } catch (e: Throwable) {
-                    store.set(key + "timeout", null) and Try.failure(e)
+                    val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
+                    store.set(key + "timeout", null) and Try.failure(wrapped)
                 }
             } else {
                 Try.state(BLOCKED)

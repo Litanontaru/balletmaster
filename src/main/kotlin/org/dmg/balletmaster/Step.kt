@@ -10,16 +10,23 @@ class Step<T : Any>(
     private val context: InternalContext,
     internal val action: () -> Try<T>,
 ) {
+    private fun Throwable.wrapped() =
+        if (this is StepExecutionException) this else StepExecutionException(stepId, this)
+
     infix fun <R : Any> input(value: R) = Step(stepId, context) {
         action() map { context.setInput(value) and { Try.success(value) } }
     }
 
     infix fun gate(gate: (Context, T) -> Boolean) = Step(stepId, context) {
         action() map { input ->
-            if (gate(context, input)) {
-                Try.success(input)
-            } else {
-                Try.state(SKIP)
+            try {
+                if (gate(context, input)) {
+                    Try.success(input)
+                } else {
+                    Try.state(SKIP)
+                }
+            } catch (e: Throwable) {
+                Try.failure(e.wrapped())
             }
         }
     }
@@ -31,7 +38,7 @@ class Step<T : Any>(
                     fun execute() = try {
                         Try.success(next(context, input))
                     } catch (e: Throwable) {
-                        Try.failure(e)
+                        Try.failure(e.wrapped())
                     } finally {
                         context.setPlay()
                     }
