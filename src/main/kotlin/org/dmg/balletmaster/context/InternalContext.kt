@@ -7,7 +7,6 @@ import org.dmg.balletmaster.Try
 interface InternalContext : Context {
     fun setStep(stepId: StepId)
     fun setInput(value: Any): Result<Boolean>
-    fun enterGate(): Result<Boolean>
     fun idempotencyGate(): Result<Boolean>
     fun setOutput(value: Try<Any>): Result<Boolean>
     fun setSuffix(suffix: Any)

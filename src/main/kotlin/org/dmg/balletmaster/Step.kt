@@ -16,12 +16,10 @@ class Step<T : Any>(
 
     infix fun gate(gate: (Context, T) -> Boolean) = Step(stepId, context) {
         action() map { input ->
-            context.enterGate() and {
-                if (gate(context, input)) {
-                    Try.success(input)
-                } else {
-                    Try.state(SKIP)
-                }
+            if (gate(context, input)) {
+                Try.success(input)
+            } else {
+                Try.state(SKIP)
             }
         }
     }

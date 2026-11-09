@@ -47,8 +47,6 @@ class ContextImpl(
 
     override fun setInput(value: Any): Result<Boolean> = store.set(key + "input", value)
 
-    override fun enterGate() = store.inc(key + "gate")
-
     override fun idempotencyGate(): Result<Boolean> = store.set(key + "output", null to null)
 
     override fun setOutput(value: Try<Any>) = store.set(key + "output", value)

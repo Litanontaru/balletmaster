@@ -32,7 +32,6 @@ class GateTest {
      * - The worker that arrives first while the other branch is still running receives TechStatus.SKIP.
      * - The worker that arrives second (when both branches are done) passes the gate and executes JOIN_STEP.
      * - JOIN_STEP business logic executes EXACTLY ONCE.
-     * - Both workers incremented the gate counter (gate == 2).
      */
     @Test
     fun concurrentForkJoinChoreography() {
@@ -152,12 +151,7 @@ class GateTest {
         // 3. JOIN_STEP was executed EXACTLY ONCE
         assertEquals(1, joinExecutionCount.get(), "Join step must execute exactly once")
 
-        // 4. Both workers passed through gate counter (store.inc was called twice)
-        val gateCounter = store.get<Int>("forkJoinOp:100:0::JOIN_STEP:gate")
-        assertTrue(gateCounter.isSuccess)
-        assertEquals(2, gateCounter.getOrThrow(), "Gate counter in store must record both activations")
-
-        // 5. Output in store is properly saved
+        // 4. Output in store is properly saved
         val storedJoinOutput = store.get<Try<String>>("forkJoinOp:100:0::JOIN_STEP:output")
         assertTrue(storedJoinOutput.isSuccess)
         assertEquals(Try.success("joined-payload"), storedJoinOutput.getOrThrow())
@@ -235,12 +229,7 @@ class GateTest {
         val stateCount = results.count { it.isState }
         assertEquals(threadCount - 1, stateCount, "All other threads must receive technical status")
 
-        // 4. All 20 threads atomically incremented the gate counter in Store
-        val gateCount = store.get<Int>("raceOp:200:0::TARGET_STEP:gate")
-        assertTrue(gateCount.isSuccess)
-        assertEquals(threadCount, gateCount.getOrThrow(), "Store must record 20 gate entries")
-
-        // 5. Checkpoint is properly persisted in Store
+        // 4. Checkpoint is properly persisted in Store
         val storedOutput = store.get<Try<String>>("raceOp:200:0::TARGET_STEP:output")
         assertTrue(storedOutput.isSuccess)
         assertEquals(Try.success("race-input-winner"), storedOutput.getOrThrow())
@@ -305,10 +294,6 @@ class GateTest {
         assertTrue(attempt2.isSuccess)
         assertEquals(Try.success("b-done"), attempt2)
         assertEquals(1, stepBExecutions.get())
-
-        // Gate counter recorded 2 entries (phase 1 and phase 3)
-        val gateCounter = store.get<Int>("staggeredOp:300:0::STEP_B:gate")
-        assertEquals(2, gateCounter.getOrThrow())
 
         callContextManager.clear()
     }
