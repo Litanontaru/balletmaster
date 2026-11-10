@@ -11,7 +11,10 @@ class Step<T : Any> private constructor(
 ) {
     internal constructor(context: InternalContext) : this(context, Chain())
 
-    private data class StepConfig(val stepId: StepId)
+    private data class StepConfig(
+        val stepId: StepId,
+        var lease: Long? = null
+    )
 
     private class Chain {
         val actions = ArrayList<Pair<StepConfig, MutableList<(StepId, Try<Any>) -> Try<Any>>>>()
@@ -103,10 +106,20 @@ class Step<T : Any> private constructor(
         }
     }
 
+    /**
+     * Sets the lease duration (in milliseconds) for the current step only;
+     * subsequent steps use the default lease unless configured explicitly.
+     */
+    infix fun lease(lease: Long): Step<T> = next {
+        require(lease > 0) { "Lease must be positive, got $lease" }
+        actions.lastOrNull()?.first?.lease = lease
+    }
+
     fun execute(): Try<T> {
         var input: Try<Any> = Try.success(Unit)
         for ((config, steps) in chain.actions) {
             context.setStep(config.stepId)
+            config.lease?.let(context::setLease)
             input = context.execute { steps.fold(input) { acc, action -> action(config.stepId, acc) } }
             if (!input.isSuccess) {
                 break

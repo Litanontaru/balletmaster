@@ -51,6 +51,7 @@ class ContextImpl(
     }
 
     override fun setLease(lease: Long) {
+        require(lease > 0) { "Lease must be positive, got $lease" }
         this.lease = lease
     }
 
