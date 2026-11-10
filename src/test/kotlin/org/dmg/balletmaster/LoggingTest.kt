@@ -10,6 +10,9 @@ import org.dmg.balletmaster.context.ContextImpl
 import org.dmg.balletmaster.logging.BalletLoggers
 import org.dmg.balletmaster.logging.BalletMdc
 import org.dmg.balletmaster.logging.buildEventMessage
+import org.dmg.balletmaster.logging.elapsedMillis
+import org.dmg.balletmaster.logging.startDebugTimer
+import org.dmg.balletmaster.logging.startWarnTimer
 import org.dmg.balletmaster.state.ProcessSupervisor
 import org.dmg.balletmaster.state.resolveState
 import org.dmg.balletmaster.store.InMemoryStore
@@ -541,5 +544,51 @@ class LoggingTest {
         assertEquals("trace-safe", MDC.get("traceId"))
         assertNull(MDC.get(BalletMdc.OPERATION))
         assertNull(MDC.get(BalletMdc.STEP))
+    }
+
+    @Test
+    fun checkpointDoesNotLogSavedWhenStoreSetReturnsFalse() {
+        val delegate = InMemoryStore()
+        val store = object : Store by delegate {
+            override fun set(key: String, value: Any?): Result<Boolean> =
+                if (key.endsWith(":output")) Result.success(false) else delegate.set(key, value)
+        }
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        callContextManager.store("ckptOp", "1", isReplay = false, attempt = 0)
+        try {
+            val result = balletMaster
+                .start()
+                .step(Steps.STEP_A)
+                .map { _, _ -> "ok" }
+                .checkPoint()
+                .execute()
+
+            assertEquals(Try.success("ok"), result)
+        } finally {
+            callContextManager.clear()
+        }
+
+        assertTrue(events("step.checkpoint_saved").isEmpty())
+        val notSaved = events("step.checkpoint_not_saved", Level.WARN)
+        assertEquals(1, notSaved.size)
+        assertTrue(notSaved[0].formattedMessage.contains("step=STEP_A"))
+    }
+
+    @Test
+    fun logTimersSkipNanoTimeWhenLoggingLevelDisabled() {
+        sdkLogger.level = Level.INFO
+        assertNull(BalletLoggers.step.startDebugTimer())
+        assertNotNull(BalletLoggers.lock.startWarnTimer())
+        assertNull(elapsedMillis(null))
+
+        sdkLogger.level = Level.ERROR
+        assertNull(BalletLoggers.lock.startWarnTimer())
+
+        sdkLogger.level = Level.DEBUG
+        val start = BalletLoggers.step.startDebugTimer()
+        assertNotNull(start)
+        assertNotNull(elapsedMillis(start))
     }
 }

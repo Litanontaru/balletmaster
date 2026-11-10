@@ -9,6 +9,7 @@ import org.dmg.balletmaster.logging.LoggingContext
 import org.dmg.balletmaster.logging.debugEvent
 import org.dmg.balletmaster.logging.elapsedMillis
 import org.dmg.balletmaster.logging.outcomeLabel
+import org.dmg.balletmaster.logging.startDebugTimer
 import org.dmg.balletmaster.logging.stateStatusOrNull
 import org.dmg.balletmaster.logging.traceEvent
 import org.dmg.balletmaster.logging.warnEvent
@@ -151,10 +152,17 @@ class Step<T : Any> private constructor(
             }
             output
         } else {
-            context.setOutput(output).onSuccess {
-                BalletLoggers.step.debugEvent("step.checkpoint_saved") {
-                    correlation(logCall(), stepId, logSuffix())
-                    attr("outcome", output.outcomeLabel())
+            context.setOutput(output).onSuccess { saved ->
+                if (saved) {
+                    BalletLoggers.step.debugEvent("step.checkpoint_saved") {
+                        correlation(logCall(), stepId, logSuffix())
+                        attr("outcome", output.outcomeLabel())
+                    }
+                } else {
+                    BalletLoggers.step.warnEvent("step.checkpoint_not_saved") {
+                        correlation(logCall(), stepId, logSuffix())
+                        attr("outcome", output.outcomeLabel())
+                    }
                 }
             } and output
         }
@@ -178,7 +186,7 @@ class Step<T : Any> private constructor(
     }
 
     fun execute(): Try<T> {
-        val startNanos = System.nanoTime()
+        val startNanos = BalletLoggers.step.startDebugTimer()
         val totalSteps = chain.actions.size
 
         if (totalSteps > 0) {

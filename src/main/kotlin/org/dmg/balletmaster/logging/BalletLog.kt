@@ -245,5 +245,17 @@ internal fun Try<*>.outcomeLabel(): String =
 internal fun Try<*>.stateStatusOrNull(): Value? =
     fold({ null }, { null }, { it }, { null })
 
-internal fun elapsedMillis(startNanos: Long): Long =
-    (System.nanoTime() - startNanos) / 1_000_000
+internal fun Logger.startDebugTimer(): Long? = try {
+    if (isDebugEnabled) System.nanoTime() else null
+} catch (_: Exception) {
+    null
+}
+
+internal fun Logger.startWarnTimer(): Long? = try {
+    if (isWarnEnabled) System.nanoTime() else null
+} catch (_: Exception) {
+    null
+}
+
+internal fun elapsedMillis(startNanos: Long?): Long? =
+    startNanos?.let { (System.nanoTime() - it) / 1_000_000 }

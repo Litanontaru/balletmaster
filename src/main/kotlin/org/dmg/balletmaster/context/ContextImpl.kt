@@ -13,6 +13,8 @@ import org.dmg.balletmaster.logging.elapsedMillis
 import org.dmg.balletmaster.logging.errorEvent
 import org.dmg.balletmaster.logging.infoEvent
 import org.dmg.balletmaster.logging.outcomeLabel
+import org.dmg.balletmaster.logging.startDebugTimer
+import org.dmg.balletmaster.logging.startWarnTimer
 import org.dmg.balletmaster.logging.stateStatusOrNull
 import org.dmg.balletmaster.logging.traceEvent
 import org.dmg.balletmaster.logging.warnEvent
@@ -126,7 +128,7 @@ class ContextImpl(
 
     private fun tryLock(): Result<Long> {
         val lockKey = key + "timeout"
-        val startNanos = System.nanoTime()
+        val startNanos = BalletLoggers.lock.startWarnTimer()
         val deadline = currentTimeMillis() + lease
         var attempts = 0
         var interrupted = false
@@ -227,7 +229,7 @@ class ContextImpl(
             } else {
                 tryLock() and { acquired ->
                     if (acquired > 0L) {
-                        val startNanos = System.nanoTime()
+                        val startNanos = BalletLoggers.step.startDebugTimer()
                         var res: Try<R>
                         var unlockResult: Result<Boolean>
                         try {
