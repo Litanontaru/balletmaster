@@ -39,11 +39,16 @@ class LoggingTest {
     }
 
     private class SnapshottingListAppender : AppenderBase<ILoggingEvent>() {
-        val list: MutableList<ILoggingEvent> = java.util.Collections.synchronizedList(ArrayList())
+        private val items = mutableListOf<ILoggingEvent>()
+
+        val list: List<ILoggingEvent>
+            get() = synchronized(items) { items.toList() }
 
         override fun append(eventObject: ILoggingEvent) {
             eventObject.prepareForDeferredProcessing()
-            list.add(eventObject)
+            synchronized(items) {
+                items.add(eventObject)
+            }
         }
     }
 
