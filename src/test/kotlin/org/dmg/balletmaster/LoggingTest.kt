@@ -9,6 +9,7 @@ import org.dmg.balletmaster.context.CallContextManager
 import org.dmg.balletmaster.context.ContextImpl
 import org.dmg.balletmaster.logging.BalletLoggers
 import org.dmg.balletmaster.logging.BalletMdc
+import org.dmg.balletmaster.logging.buildEventMessage
 import org.dmg.balletmaster.state.ProcessSupervisor
 import org.dmg.balletmaster.state.resolveState
 import org.dmg.balletmaster.store.InMemoryStore
@@ -435,5 +436,34 @@ class LoggingTest {
         val notFound = events("state.config_not_found", Level.WARN)
         assertEquals(1, notFound.size)
         assertTrue(notFound[0].formattedMessage.contains("versionPrefix=9."))
+    }
+
+    @Test
+    fun attributeFormattingEscapesTabsAndControlCharacters() {
+        val msg = buildEventMessage("test.event") {
+            attr("tab", "a\tb")
+            attr("ansi", "\u001B[31mred")
+            attr("del", "x\u007Fy")
+            attr("sep", "l1\u2028l2\u2029l3")
+            attr("crlf", "p\r\nq")
+            attr("empty", "")
+            attr("plain", "ok_123")
+        }
+
+        assertFalse(msg.contains('\t'))
+        assertFalse(msg.contains('\n'))
+        assertFalse(msg.contains('\r'))
+        assertFalse(msg.contains('\u001B'))
+        assertFalse(msg.contains('\u007F'))
+        assertFalse(msg.contains('\u2028'))
+        assertFalse(msg.contains('\u2029'))
+
+        assertTrue(msg.contains("tab=\"a\\tb\""))
+        assertTrue(msg.contains("ansi=\"\\u001b[31mred\""))
+        assertTrue(msg.contains("del=\"x\\u007fy\""))
+        assertTrue(msg.contains("sep=\"l1\\u2028l2\\u2029l3\""))
+        assertTrue(msg.contains("crlf=\"p\\r\\nq\""))
+        assertTrue(msg.contains("empty=\"\""))
+        assertTrue(msg.contains("plain=ok_123"))
     }
 }

@@ -132,22 +132,35 @@ internal class LogAttrs {
         if (builder.isEmpty()) "[$event]" else "[$event] $builder"
 
     private fun appendFormatted(raw: String) {
-        val needsQuotes = raw.isEmpty() || raw.any { it.isWhitespace() || it == '"' || it == '=' || it == '\\' }
+        val needsQuotes = raw.isEmpty() || raw.any {
+            it.isWhitespace() || it.isISOControl() || it == '"' || it == '=' || it == '\\'
+        }
         if (!needsQuotes) {
             builder.append(raw)
             return
         }
         builder.append('"')
         for (ch in raw) {
-            when (ch) {
-                '\\' -> builder.append("\\\\")
-                '"' -> builder.append("\\\"")
-                '\n' -> builder.append("\\n")
-                '\r' -> builder.append("\\r")
+            when {
+                ch == '\\' -> builder.append("\\\\")
+                ch == '"' -> builder.append("\\\"")
+                ch == '\n' -> builder.append("\\n")
+                ch == '\r' -> builder.append("\\r")
+                ch == '\t' -> builder.append("\\t")
+                ch.isISOControl() || ch == '\u2028' || ch == '\u2029' -> appendUnicodeEscape(ch)
                 else -> builder.append(ch)
             }
         }
         builder.append('"')
+    }
+
+    private fun appendUnicodeEscape(ch: Char) {
+        builder.append("\\u")
+        val hex = ch.code.toString(16)
+        for (i in hex.length until 4) {
+            builder.append('0')
+        }
+        builder.append(hex)
     }
 }
 
