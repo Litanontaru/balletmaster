@@ -2,7 +2,6 @@ package org.dmg.balletmaster
 
 import org.dmg.balletmaster.context.CallContextManager
 import org.dmg.balletmaster.context.ContextImpl
-import org.dmg.balletmaster.context.DefaultStep
 import org.dmg.balletmaster.state.StateConfig
 import org.dmg.balletmaster.state.StateConfigBuilder
 import org.dmg.balletmaster.state.StateConfigRepository
@@ -16,17 +15,14 @@ class BalletMaster(
     private val stateConfigRepository: StateConfigRepository = StoreStateConfigRepository(store)
 ) {
     fun start() =
-        Step(
-            DefaultStep,
+        Step<Unit>(
             ContextImpl(
                 store,
                 callContextManager::get,
                 callContextManager::off,
                 callContextManager::setSuffix
             )
-        ) {
-            Try.success(Unit)
-        }
+        )
 
     fun <S : StepId, STATE : Any> defineStates(
         operationName: String,
