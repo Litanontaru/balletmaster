@@ -3,6 +3,7 @@ package org.dmg.balletmaster.state
 import org.dmg.balletmaster.StepId
 import org.dmg.balletmaster.Try
 import org.dmg.balletmaster.logging.BalletLoggers
+import org.dmg.balletmaster.logging.BalletMdc
 import org.dmg.balletmaster.logging.debugEvent
 import org.dmg.balletmaster.logging.errorEvent
 import org.dmg.balletmaster.logging.warnEvent
@@ -42,7 +43,7 @@ class ProcessSupervisor(
         return repository.getLatest(operationName, versionPrefix, stepClass, stateClass) + { config ->
             if (config == null) {
                 BalletLoggers.state.warnEvent("state.config_not_found") {
-                    attr("op", operationName)
+                    attr(BalletMdc.OPERATION, operationName)
                     attr("versionPrefix", versionPrefix)
                 }
                 Result.failure(NoSuchElementException("StateConfig not found for operation='$operationName' with versionPrefix='$versionPrefix'"))
@@ -52,11 +53,11 @@ class ProcessSupervisor(
                     store.get<Try<*>>(key)
                         .onFailure { ex ->
                             BalletLoggers.store.errorEvent("store.error", ex) {
-                                attr("op", operationName)
-                                attr("id", operationId)
-                                attr("attempt", attempt)
-                                attr("suffix", suffix)
-                                attr("step", stepId)
+                                attr(BalletMdc.OPERATION, operationName)
+                                attr(BalletMdc.OPERATION_ID, operationId)
+                                attr(BalletMdc.ATTEMPT, attempt)
+                                attr(BalletMdc.SUFFIX, suffix)
+                                attr(BalletMdc.STEP, stepId)
                                 attr("storeOp", "supervisor_step_check")
                                 attr("key", key)
                             }
@@ -64,10 +65,10 @@ class ProcessSupervisor(
                         .fold({ it?.isSuccess == true }, { false })
                 }
                 BalletLoggers.state.debugEvent("state.resolved") {
-                    attr("op", operationName)
-                    attr("id", operationId)
-                    attr("attempt", attempt)
-                    attr("suffix", suffix)
+                    attr(BalletMdc.OPERATION, operationName)
+                    attr(BalletMdc.OPERATION_ID, operationId)
+                    attr(BalletMdc.ATTEMPT, attempt)
+                    attr(BalletMdc.SUFFIX, suffix)
                     attr("version", config.version)
                     attr("versionPrefix", versionPrefix)
                     attr("state", state)

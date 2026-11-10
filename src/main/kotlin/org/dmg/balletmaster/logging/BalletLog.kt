@@ -7,6 +7,7 @@ import org.dmg.balletmaster.store.Value
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
+import org.slf4j.spi.LoggingEventBuilder
 
 /**
  * Hierarchical SLF4J logger categories for Balletmaster subsystems.
@@ -126,76 +127,67 @@ internal fun safeToString(value: Any): String = try {
 }
 
 /**
- * Builder for structured log attributes formatted cleanly without exposing user payloads.
+ * Builder for structured SLF4J 2.0 event key-value attributes without exposing user payloads.
  */
 @PublishedApi
-internal class LogAttrs {
-    private val builder = StringBuilder()
-
+internal class LogAttrs(
+    private val builder: LoggingEventBuilder
+) {
     fun correlation(call: CallContext?, stepId: StepId? = null, suffix: Any? = null) {
         if (call != null) {
-            attr("op", call.operationName)
-            attr("id", call.operationId)
-            attr("attempt", call.attempt)
-            attr("suffix", suffix ?: call.operationSuffix)
+            attr(BalletMdc.OPERATION, call.operationName)
+            attr(BalletMdc.OPERATION_ID, call.operationId)
+            attr(BalletMdc.ATTEMPT, call.attempt)
+            attr(BalletMdc.SUFFIX, suffix ?: call.operationSuffix)
         }
         if (stepId != null) {
-            attr("step", stepId)
+            attr(BalletMdc.STEP, stepId)
         }
     }
 
     fun attr(key: String, value: Any?) {
         if (value == null) return
-        val rendered = safeToString(value)
-        if (builder.isNotEmpty()) builder.append(' ')
-        builder.append(key).append('=')
-        appendFormatted(rendered)
-    }
-
-    fun format(event: String): String =
-        if (builder.isEmpty()) "[$event]" else "[$event] $builder"
-
-    private fun appendFormatted(raw: String) {
-        val needsQuotes = raw.isEmpty() || raw.any {
-            it.isWhitespace() || it.isISOControl() || it == '"' || it == '=' || it == '\\'
-        }
-        if (!needsQuotes) {
-            builder.append(raw)
-            return
-        }
-        builder.append('"')
-        for (ch in raw) {
-            when {
-                ch == '\\' -> builder.append("\\\\")
-                ch == '"' -> builder.append("\\\"")
-                ch == '\n' -> builder.append("\\n")
-                ch == '\r' -> builder.append("\\r")
-                ch == '\t' -> builder.append("\\t")
-                ch.isISOControl() || ch == '\u2028' || ch == '\u2029' -> appendUnicodeEscape(ch)
-                else -> builder.append(ch)
-            }
-        }
-        builder.append('"')
-    }
-
-    private fun appendUnicodeEscape(ch: Char) {
-        builder.append("\\u")
-        val hex = ch.code.toString(16)
-        for (i in hex.length until 4) {
-            builder.append('0')
-        }
-        builder.append(hex)
+        builder.addKeyValue(key, normalizeAttrValue(value))
     }
 }
 
-@PublishedApi
-internal inline fun buildEventMessage(event: String, attrs: LogAttrs.() -> Unit): String =
-    LogAttrs().apply(attrs).format(event)
+private fun normalizeAttrValue(value: Any): Any = when (value) {
+    is Byte, is Short, is Int, is Long, is Float, is Double, is Boolean -> value
+    else -> sanitizeControlChars(safeToString(value))
+}
+
+private fun sanitizeControlChars(raw: String): String {
+    if (raw.none { it.isISOControl() || it == '\u2028' || it == '\u2029' }) {
+        return raw
+    }
+    return buildString(raw.length + 8) {
+        for (ch in raw) {
+            when {
+                ch == '\n' -> append("\\n")
+                ch == '\r' -> append("\\r")
+                ch == '\t' -> append("\\t")
+                ch.isISOControl() || ch == '\u2028' || ch == '\u2029' -> appendUnicodeEscape(this, ch)
+                else -> append(ch)
+            }
+        }
+    }
+}
+
+private fun appendUnicodeEscape(builder: StringBuilder, ch: Char) {
+    builder.append("\\u")
+    val hex = ch.code.toString(16)
+    for (i in hex.length until 4) {
+        builder.append('0')
+    }
+    builder.append(hex)
+}
 
 internal inline fun Logger.traceEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
     try {
         if (isTraceEnabled) {
-            trace(buildEventMessage(event, attrs))
+            val builder = atTrace().setMessage(event)
+            LogAttrs(builder).apply(attrs)
+            builder.log()
         }
     } catch (_: Exception) {
     }
@@ -204,7 +196,9 @@ internal inline fun Logger.traceEvent(event: String, attrs: LogAttrs.() -> Unit 
 internal inline fun Logger.debugEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
     try {
         if (isDebugEnabled) {
-            debug(buildEventMessage(event, attrs))
+            val builder = atDebug().setMessage(event)
+            LogAttrs(builder).apply(attrs)
+            builder.log()
         }
     } catch (_: Exception) {
     }
@@ -213,7 +207,9 @@ internal inline fun Logger.debugEvent(event: String, attrs: LogAttrs.() -> Unit 
 internal inline fun Logger.infoEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
     try {
         if (isInfoEnabled) {
-            info(buildEventMessage(event, attrs))
+            val builder = atInfo().setMessage(event)
+            LogAttrs(builder).apply(attrs)
+            builder.log()
         }
     } catch (_: Exception) {
     }
@@ -222,8 +218,10 @@ internal inline fun Logger.infoEvent(event: String, attrs: LogAttrs.() -> Unit =
 internal inline fun Logger.warnEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
     try {
         if (isWarnEnabled) {
-            val msg = buildEventMessage(event, attrs)
-            if (throwable != null) warn(msg, throwable) else warn(msg)
+            val builder = atWarn().setMessage(event)
+            if (throwable != null) builder.setCause(throwable)
+            LogAttrs(builder).apply(attrs)
+            builder.log()
         }
     } catch (_: Exception) {
     }
@@ -232,8 +230,10 @@ internal inline fun Logger.warnEvent(event: String, throwable: Throwable? = null
 internal inline fun Logger.errorEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
     try {
         if (isErrorEnabled) {
-            val msg = buildEventMessage(event, attrs)
-            if (throwable != null) error(msg, throwable) else error(msg)
+            val builder = atError().setMessage(event)
+            if (throwable != null) builder.setCause(throwable)
+            LogAttrs(builder).apply(attrs)
+            builder.log()
         }
     } catch (_: Exception) {
     }

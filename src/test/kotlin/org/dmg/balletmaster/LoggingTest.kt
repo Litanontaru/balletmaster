@@ -2,6 +2,7 @@ package org.dmg.balletmaster
 
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.PatternLayout
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.AppenderBase
 import org.dmg.balletmaster.context.CallContext
@@ -9,7 +10,7 @@ import org.dmg.balletmaster.context.CallContextManager
 import org.dmg.balletmaster.context.ContextImpl
 import org.dmg.balletmaster.logging.BalletLoggers
 import org.dmg.balletmaster.logging.BalletMdc
-import org.dmg.balletmaster.logging.buildEventMessage
+import org.dmg.balletmaster.logging.debugEvent
 import org.dmg.balletmaster.logging.elapsedMillis
 import org.dmg.balletmaster.logging.startDebugTimer
 import org.dmg.balletmaster.logging.startWarnTimer
@@ -95,11 +96,14 @@ class LoggingTest {
         MDC.clear()
     }
 
-    private fun events(prefix: String? = null, level: Level? = null): List<ILoggingEvent> =
+    private fun events(eventName: String? = null, level: Level? = null): List<ILoggingEvent> =
         appender.list.filter { event ->
-            (prefix == null || event.formattedMessage.startsWith("[$prefix]")) &&
+            (eventName == null || event.message == eventName) &&
                 (level == null || event.level == level)
         }
+
+    private fun ILoggingEvent.attrs(): Map<String, Any?> =
+        keyValuePairs.orEmpty().associate { it.key to it.value }
 
     @Test
     fun successfulChainLogsLifecycleWithoutUserPayloads() {
@@ -130,27 +134,40 @@ class LoggingTest {
 
         val startedChain = events("chain.started", Level.DEBUG)
         assertEquals(1, startedChain.size)
-        assertTrue(startedChain[0].formattedMessage.contains("stepsCount=2"))
-        assertTrue(startedChain[0].formattedMessage.contains("steps=STEP_A,STEP_B"))
+        assertEquals(2, startedChain[0].attrs()["stepsCount"])
+        assertEquals("STEP_A,STEP_B", startedChain[0].attrs()["steps"])
 
         val startedSteps = events("step.started", Level.DEBUG)
         assertEquals(2, startedSteps.size)
-        assertTrue(startedSteps.any { it.formattedMessage.contains("op=orderFlow") && it.formattedMessage.contains("id=ord-1") && it.formattedMessage.contains("step=STEP_A") })
-        assertTrue(startedSteps.any { it.formattedMessage.contains("step=STEP_B") })
+        assertTrue(startedSteps.any {
+            val attrs = it.attrs()
+            attrs[BalletMdc.OPERATION] == "orderFlow" &&
+                attrs[BalletMdc.OPERATION_ID] == "ord-1" &&
+                attrs[BalletMdc.STEP] == "STEP_A"
+        })
+        assertTrue(startedSteps.any { it.attrs()[BalletMdc.STEP] == "STEP_B" })
 
         val checkpoints = events("step.checkpoint_saved", Level.DEBUG)
         assertEquals(2, checkpoints.size)
 
         val completedSteps = events("step.completed", Level.DEBUG)
         assertEquals(2, completedSteps.size)
-        assertTrue(completedSteps.all { it.formattedMessage.contains("outcome=SUCCESS") })
+        assertTrue(completedSteps.all { it.attrs()["outcome"] == "SUCCESS" })
 
         val completedChain = events("chain.completed", Level.DEBUG)
         assertEquals(1, completedChain.size)
 
-        // Sensitive payloads must never leak into system logs
-        assertTrue(appender.list.none { it.formattedMessage.contains(secretInput) })
-        assertTrue(appender.list.none { it.formattedMessage.contains(secretOutput) })
+        // Sensitive payloads must never leak into system logs (neither message, keyValues, nor MDC)
+        assertTrue(appender.list.none { event ->
+            event.formattedMessage.contains(secretInput) ||
+                event.attrs().values.any { it?.toString()?.contains(secretInput) == true } ||
+                event.mdcPropertyMap.values.any { it.contains(secretInput) }
+        })
+        assertTrue(appender.list.none { event ->
+            event.formattedMessage.contains(secretOutput) ||
+                event.attrs().values.any { it?.toString()?.contains(secretOutput) == true } ||
+                event.mdcPropertyMap.values.any { it.contains(secretOutput) }
+        })
     }
 
     @Test
@@ -188,7 +205,7 @@ class LoggingTest {
 
         val milestoneEvents = events("step.milestone_updated", Level.DEBUG)
         assertEquals(1, milestoneEvents.size)
-        assertTrue(milestoneEvents[0].formattedMessage.contains("newSuffix=phase-2"))
+        assertEquals("phase-2", milestoneEvents[0].attrs()["newSuffix"])
 
         // Pre-existing MDC entries must be restored and transient ballet.* keys cleaned up
         assertEquals("trace-xyz", MDC.get("traceId"))
@@ -227,10 +244,13 @@ class LoggingTest {
 
             val idempotentSkip = events("step.skipped_idempotent", Level.DEBUG)
             assertEquals(1, idempotentSkip.size)
-            assertTrue(idempotentSkip[0].formattedMessage.contains("step=STEP_B"))
+            assertEquals("STEP_B", idempotentSkip[0].attrs()[BalletMdc.STEP])
 
             val stopped = events("chain.stopped", Level.DEBUG)
-            assertTrue(stopped.any { it.formattedMessage.contains("outcome=STATE") && it.formattedMessage.contains("status=SKIP") })
+            assertTrue(stopped.any {
+                val attrs = it.attrs()
+                attrs["outcome"] == "STATE" && attrs["status"] == "SKIP"
+            })
         } finally {
             callContextManager.clear()
         }
@@ -263,16 +283,16 @@ class LoggingTest {
         val hits = events("replay.cache_hit", Level.DEBUG)
         assertEquals(1, hits.size)
         assertEquals(BalletLoggers.REPLAY, hits[0].loggerName)
-        assertTrue(hits[0].formattedMessage.contains("step=STEP_A"))
+        assertEquals("STEP_A", hits[0].attrs()[BalletMdc.STEP])
 
         val misses = events("replay.cache_miss", Level.DEBUG)
         assertEquals(1, misses.size)
-        assertTrue(misses[0].formattedMessage.contains("step=STEP_B"))
+        assertEquals("STEP_B", misses[0].attrs()[BalletMdc.STEP])
 
         val switched = events("replay.switched_to_live", Level.INFO)
         assertEquals(1, switched.size)
         assertEquals(BalletLoggers.REPLAY, switched[0].loggerName)
-        assertTrue(switched[0].formattedMessage.contains("step=STEP_B"))
+        assertEquals("STEP_B", switched[0].attrs()[BalletMdc.STEP])
     }
 
     @Test
@@ -298,14 +318,14 @@ class LoggingTest {
 
         val exEvents = events("step.exception", Level.WARN)
         assertEquals(1, exEvents.size)
-        assertTrue(exEvents[0].formattedMessage.contains("phase=map"))
-        assertTrue(exEvents[0].formattedMessage.contains("step=STEP_A"))
+        assertEquals("map", exEvents[0].attrs()["phase"])
+        assertEquals("STEP_A", exEvents[0].attrs()[BalletMdc.STEP])
         assertNotNull(exEvents[0].throwableProxy)
         assertEquals(StepExecutionException::class.java.name, exEvents[0].throwableProxy.className)
 
         val stopped = events("chain.stopped", Level.DEBUG)
         assertEquals(1, stopped.size)
-        assertTrue(stopped[0].formattedMessage.contains("outcome=FAILURE"))
+        assertEquals("FAILURE", stopped[0].attrs()["outcome"])
     }
 
     @Test
@@ -333,14 +353,14 @@ class LoggingTest {
         val storeErrors = events("store.error", Level.ERROR)
         assertEquals(1, storeErrors.size)
         assertEquals(BalletLoggers.STORE, storeErrors[0].loggerName)
-        assertTrue(storeErrors[0].formattedMessage.contains("storeOp=set_input"))
-        assertTrue(storeErrors[0].formattedMessage.contains("op=errOp"))
-        assertTrue(storeErrors[0].formattedMessage.contains("id=99"))
+        assertEquals("set_input", storeErrors[0].attrs()["storeOp"])
+        assertEquals("errOp", storeErrors[0].attrs()[BalletMdc.OPERATION])
+        assertEquals("99", storeErrors[0].attrs()[BalletMdc.OPERATION_ID])
         assertNotNull(storeErrors[0].throwableProxy)
 
         val stopped = events("chain.stopped", Level.DEBUG)
         assertEquals(1, stopped.size)
-        assertTrue(stopped[0].formattedMessage.contains("outcome=ERROR"))
+        assertEquals("ERROR", stopped[0].attrs()["outcome"])
     }
 
     @Test
@@ -429,21 +449,21 @@ class LoggingTest {
         val saved = events("state.config_saved", Level.INFO)
         assertEquals(1, saved.size)
         assertEquals(BalletLoggers.STATE, saved[0].loggerName)
-        assertTrue(saved[0].formattedMessage.contains("op=supOp"))
-        assertTrue(saved[0].formattedMessage.contains("version=1.0.0"))
+        assertEquals("supOp", saved[0].attrs()[BalletMdc.OPERATION])
+        assertEquals("1.0.0", saved[0].attrs()["version"])
 
         val resolvedEvents = events("state.resolved", Level.DEBUG)
         assertEquals(1, resolvedEvents.size)
-        assertTrue(resolvedEvents[0].formattedMessage.contains("state=TODO"))
+        assertEquals("TODO", resolvedEvents[0].attrs()["state"])
 
         val notFound = events("state.config_not_found", Level.WARN)
         assertEquals(1, notFound.size)
-        assertTrue(notFound[0].formattedMessage.contains("versionPrefix=9."))
+        assertEquals("9.", notFound[0].attrs()["versionPrefix"])
     }
 
     @Test
     fun attributeFormattingEscapesTabsAndControlCharacters() {
-        val msg = buildEventMessage("test.event") {
+        BalletLoggers.step.debugEvent("test.event") {
             attr("tab", "a\tb")
             attr("ansi", "\u001B[31mred")
             attr("del", "x\u007Fy")
@@ -451,23 +471,30 @@ class LoggingTest {
             attr("crlf", "p\r\nq")
             attr("empty", "")
             attr("plain", "ok_123")
+            attr("count", 42)
+            attr("flag", true)
         }
 
-        assertFalse(msg.contains('\t'))
-        assertFalse(msg.contains('\n'))
-        assertFalse(msg.contains('\r'))
-        assertFalse(msg.contains('\u001B'))
-        assertFalse(msg.contains('\u007F'))
-        assertFalse(msg.contains('\u2028'))
-        assertFalse(msg.contains('\u2029'))
+        val attrs = events("test.event", Level.DEBUG).single().attrs()
+        for (value in attrs.values.filterIsInstance<String>()) {
+            assertFalse(value.contains('\t'))
+            assertFalse(value.contains('\n'))
+            assertFalse(value.contains('\r'))
+            assertFalse(value.contains('\u001B'))
+            assertFalse(value.contains('\u007F'))
+            assertFalse(value.contains('\u2028'))
+            assertFalse(value.contains('\u2029'))
+        }
 
-        assertTrue(msg.contains("tab=\"a\\tb\""))
-        assertTrue(msg.contains("ansi=\"\\u001b[31mred\""))
-        assertTrue(msg.contains("del=\"x\\u007fy\""))
-        assertTrue(msg.contains("sep=\"l1\\u2028l2\\u2029l3\""))
-        assertTrue(msg.contains("crlf=\"p\\r\\nq\""))
-        assertTrue(msg.contains("empty=\"\""))
-        assertTrue(msg.contains("plain=ok_123"))
+        assertEquals("a\\tb", attrs["tab"])
+        assertEquals("\\u001b[31mred", attrs["ansi"])
+        assertEquals("x\\u007fy", attrs["del"])
+        assertEquals("l1\\u2028l2\\u2029l3", attrs["sep"])
+        assertEquals("p\\r\\nq", attrs["crlf"])
+        assertEquals("", attrs["empty"])
+        assertEquals("ok_123", attrs["plain"])
+        assertEquals(42, attrs["count"])
+        assertEquals(true, attrs["flag"])
     }
 
     @Test
@@ -524,12 +551,13 @@ class LoggingTest {
             override fun toString(): String = throw IllegalStateException("suffix toString boom")
         }
 
-        val attrMsg = buildEventMessage("test.safe") {
+        BalletLoggers.step.debugEvent("test.safe") {
             attr("bad", brokenSuffix)
             attr("good", "ok")
         }
-        assertTrue(attrMsg.contains("bad=<toString_error:IllegalStateException>"))
-        assertTrue(attrMsg.contains("good=ok"))
+        val safeAttrs = events("test.safe", Level.DEBUG).single().attrs()
+        assertEquals("<toString_error:IllegalStateException>", safeAttrs["bad"])
+        assertEquals("ok", safeAttrs["good"])
 
         MDC.put("traceId", "trace-safe")
         val call = CallContext("mdcFailOp", "id-1", isReplay = false, attempt = 0)
@@ -573,7 +601,7 @@ class LoggingTest {
         assertTrue(events("step.checkpoint_saved").isEmpty())
         val notSaved = events("step.checkpoint_not_saved", Level.WARN)
         assertEquals(1, notSaved.size)
-        assertTrue(notSaved[0].formattedMessage.contains("step=STEP_A"))
+        assertEquals("STEP_A", notSaved[0].attrs()[BalletMdc.STEP])
     }
 
     @Test
@@ -590,5 +618,65 @@ class LoggingTest {
         val start = BalletLoggers.step.startDebugTimer()
         assertNotNull(start)
         assertNotNull(elapsedMillis(start))
+    }
+
+    @Test
+    fun structuredEventsCarryUnifiedKeyValuesIndependentlyOfMdcAndRenderViaKvp() {
+        val store = InMemoryStore()
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        callContextManager.store("kvOp", "ord-kv-7", isReplay = false, attempt = 2, operationSuffix = "v1")
+        try {
+            val result = balletMaster
+                .start()
+                .step(Steps.STEP_A)
+                .lease(2500L)
+                .map { _, _ -> "ok" }
+                .execute()
+            assertEquals(Try.success("ok"), result)
+        } finally {
+            callContextManager.clear()
+        }
+
+        val started = events("step.started", Level.DEBUG).single()
+        assertEquals("step.started", started.formattedMessage)
+
+        val startedAttrs = started.attrs()
+        assertEquals("kvOp", startedAttrs[BalletMdc.OPERATION])
+        assertEquals("ord-kv-7", startedAttrs[BalletMdc.OPERATION_ID])
+        assertEquals(2, startedAttrs[BalletMdc.ATTEMPT])
+        assertEquals("v1", startedAttrs[BalletMdc.SUFFIX])
+        assertEquals("STEP_A", startedAttrs[BalletMdc.STEP])
+        assertEquals(false, startedAttrs[BalletMdc.REPLAY])
+        assertEquals(2500L, startedAttrs["leaseMs"])
+        assertEquals("2", started.mdcPropertyMap[BalletMdc.ATTEMPT])
+
+        val completed = events("step.completed", Level.DEBUG).single()
+        assertTrue(completed.attrs()["durationMs"] is Long)
+
+        // Chain events happen outside step MDC scope yet still carry correlation KeyValuePairs
+        val chainStarted = events("chain.started", Level.DEBUG).single()
+        assertNull(chainStarted.mdcPropertyMap[BalletMdc.OPERATION])
+        assertEquals("kvOp", chainStarted.attrs()[BalletMdc.OPERATION])
+        assertEquals("ord-kv-7", chainStarted.attrs()[BalletMdc.OPERATION_ID])
+        assertEquals(2, chainStarted.attrs()[BalletMdc.ATTEMPT])
+        assertEquals("v1", chainStarted.attrs()[BalletMdc.SUFFIX])
+
+        // Verify Logback %kvp pattern converter renders structured pairs alongside %msg
+        val layout = PatternLayout().apply {
+            context = sdkLogger.loggerContext
+            pattern = "%-5level %msg %kvp"
+            start()
+        }
+        try {
+            val rendered = layout.doLayout(started)
+            assertTrue(rendered.contains("step.started"))
+            assertTrue(rendered.contains("${BalletMdc.OPERATION}=\"kvOp\""))
+            assertTrue(rendered.contains("${BalletMdc.ATTEMPT}=\"2\""))
+            assertTrue(rendered.contains("leaseMs=\"2500\""))
+        } finally {
+            layout.stop()
+        }
     }
 }

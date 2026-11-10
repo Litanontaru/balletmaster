@@ -3,6 +3,7 @@ package org.dmg.balletmaster.state
 import com.fasterxml.jackson.core.type.TypeReference
 import org.dmg.balletmaster.StepId
 import org.dmg.balletmaster.logging.BalletLoggers
+import org.dmg.balletmaster.logging.BalletMdc
 import org.dmg.balletmaster.logging.errorEvent
 import org.dmg.balletmaster.logging.infoEvent
 import org.dmg.balletmaster.store.Store
@@ -50,7 +51,7 @@ class StoreStateConfigRepository(
         val saveConfigResult = store.set(key, json)
             .onFailure { ex ->
                 BalletLoggers.store.errorEvent("store.error", ex) {
-                    attr("op", config.operationName)
+                    attr(BalletMdc.OPERATION, config.operationName)
                     attr("storeOp", "state_config_save")
                     attr("key", key)
                 }
@@ -67,14 +68,14 @@ class StoreStateConfigRepository(
             store.set(vKey, versionsJson)
                 .onFailure { ex ->
                     BalletLoggers.store.errorEvent("store.error", ex) {
-                        attr("op", config.operationName)
+                        attr(BalletMdc.OPERATION, config.operationName)
                         attr("storeOp", "state_versions_save")
                         attr("key", vKey)
                     }
                 }
         }
         BalletLoggers.state.infoEvent("state.config_saved") {
-            attr("op", config.operationName)
+            attr(BalletMdc.OPERATION, config.operationName)
             attr("version", config.version)
             attr("rulesCount", config.rules.size)
         }
@@ -91,7 +92,7 @@ class StoreStateConfigRepository(
         return store.get<String>(key)
             .onFailure { ex ->
                 BalletLoggers.store.errorEvent("store.error", ex) {
-                    attr("op", operationName)
+                    attr(BalletMdc.OPERATION, operationName)
                     attr("storeOp", "state_config_get")
                     attr("key", key)
                 }
@@ -106,7 +107,7 @@ class StoreStateConfigRepository(
         return store.get<String>(key)
             .onFailure { ex ->
                 BalletLoggers.store.errorEvent("store.error", ex) {
-                    attr("op", operationName)
+                    attr(BalletMdc.OPERATION, operationName)
                     attr("storeOp", "state_versions_get")
                     attr("key", key)
                 }

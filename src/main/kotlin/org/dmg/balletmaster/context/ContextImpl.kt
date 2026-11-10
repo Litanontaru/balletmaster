@@ -222,7 +222,7 @@ class ContextImpl(
         BalletMdc.withStepContext(call, stepId, stepSuffix) {
             if (call == null) {
                 BalletLoggers.step.warnEvent("step.no_call") {
-                    attr("step", stepId)
+                    attr(BalletMdc.STEP, stepId)
                     attr("status", NO_CALL)
                 }
                 Try.state(NO_CALL)
@@ -236,7 +236,7 @@ class ContextImpl(
                             BalletLoggers.step.debugEvent("step.started") {
                                 correlation(call, stepId, stepSuffix)
                                 attr("leaseMs", lease)
-                                attr("replay", isReplay())
+                                attr(BalletMdc.REPLAY, isReplay())
                             }
                             res = try {
                                 action()
