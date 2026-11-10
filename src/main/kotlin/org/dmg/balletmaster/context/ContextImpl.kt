@@ -15,7 +15,7 @@ class ContextImpl(
     private val store: Store,
     private val callProvider: () -> CallContext?,
     private val off: () -> Unit,
-    private val onSetSuffix: (Any) -> Unit = {}
+    private val onSetSuffix: (Any) -> Unit = {},
 ) : InternalContext {
     private val call: CallContext? get() = callProvider()
 
@@ -35,7 +35,8 @@ class ContextImpl(
 
     private val originalKey: String get() = aKey(stepId, call?.attempt?.takeIf { it > 0 }?.let { it - 1 }, stepSuffix)
 
-    override fun isDone(stepId: StepId) = store.get<Try<*>>(key(stepId) + "output").fold({ it?.isSuccess == true }, { false })
+    override fun isDone(stepId: StepId) =
+        store.get<Try<*>>(key(stepId) + "output").fold({ it?.isSuccess == true }, { false })
 
     override fun setStep(stepId: StepId) {
         this.stepId = stepId
@@ -60,45 +61,44 @@ class ContextImpl(
         off()
     }
 
-    override fun <R : Any> execute(action: () -> Try<R>): Try<R> =
-        if (call == null) {
-            Try.state(NO_CALL)
-        } else {
-            val deadline = currentTimeMillis() + timeout
-            var acquired = false
+    override fun <R : Any> execute(action: () -> Try<R>): Try<R> = if (call == null) {
+        Try.state(NO_CALL)
+    } else {
+        val deadline = currentTimeMillis() + timeout
+        var acquired = false
 
-            while (currentTimeMillis() <= deadline) {
-                val now = currentTimeMillis()
-                val leaseUntil = now + timeout
+        while (currentTimeMillis() <= deadline) {
+            val now = currentTimeMillis()
+            val leaseUntil = now + timeout
 
-                val lockResult = store.set(key + "timeout", null to leaseUntil) + {
-                    if (it) Result.success(it)
-                    else store.set(key + "timeout", lessThen(now) to leaseUntil)
-                }
-
-                if (lockResult.fold({ it }, { false })) {
-                    acquired = true
-                    break
-                }
-
-                try {
-                    Thread.sleep(10)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    break
-                }
+            val lockResult = store.set(key + "timeout", null to leaseUntil) + {
+                if (it) Result.success(it)
+                else store.set(key + "timeout", lessThen(now) to leaseUntil)
             }
 
-            if (acquired) {
-                try {
-                    val res = action()
-                    store.set(key + "timeout", null) and res
-                } catch (e: Throwable) {
-                    val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
-                    store.set(key + "timeout", null) and Try.failure(wrapped)
-                }
-            } else {
-                Try.state(BLOCKED)
+            if (lockResult.fold({ it }, { false })) {
+                acquired = true
+                break
+            }
+
+            try {
+                Thread.sleep(10)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
             }
         }
+
+        if (acquired) {
+            try {
+                val res = action()
+                store.set(key + "timeout", null) and res
+            } catch (e: Throwable) {
+                val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
+                store.set(key + "timeout", null) and Try.failure(wrapped)
+            }
+        } else {
+            Try.state(BLOCKED)
+        }
+    }
 }
