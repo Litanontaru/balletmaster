@@ -2,6 +2,10 @@ package org.dmg.balletmaster.state
 
 import org.dmg.balletmaster.StepId
 import org.dmg.balletmaster.Try
+import org.dmg.balletmaster.logging.BalletLoggers
+import org.dmg.balletmaster.logging.debugEvent
+import org.dmg.balletmaster.logging.errorEvent
+import org.dmg.balletmaster.logging.warnEvent
 import org.dmg.balletmaster.store.Store
 import org.dmg.balletmaster.util.plus
 
@@ -37,11 +41,36 @@ class ProcessSupervisor(
     ): Result<STATE> {
         return repository.getLatest(operationName, versionPrefix, stepClass, stateClass) + { config ->
             if (config == null) {
+                BalletLoggers.state.warnEvent("state.config_not_found") {
+                    attr("op", operationName)
+                    attr("versionPrefix", versionPrefix)
+                }
                 Result.failure(NoSuchElementException("StateConfig not found for operation='$operationName' with versionPrefix='$versionPrefix'"))
             } else {
                 val state = config.evaluate { stepId ->
                     val key = "${operationName}:${operationId}:${attempt}:${suffix}:${stepId}:output"
-                    store.get<Try<*>>(key).fold({ it?.isSuccess == true }, { false })
+                    store.get<Try<*>>(key)
+                        .onFailure { ex ->
+                            BalletLoggers.store.errorEvent("store.error", ex) {
+                                attr("op", operationName)
+                                attr("id", operationId)
+                                attr("attempt", attempt)
+                                attr("suffix", suffix)
+                                attr("step", stepId)
+                                attr("storeOp", "supervisor_step_check")
+                                attr("key", key)
+                            }
+                        }
+                        .fold({ it?.isSuccess == true }, { false })
+                }
+                BalletLoggers.state.debugEvent("state.resolved") {
+                    attr("op", operationName)
+                    attr("id", operationId)
+                    attr("attempt", attempt)
+                    attr("suffix", suffix)
+                    attr("version", config.version)
+                    attr("versionPrefix", versionPrefix)
+                    attr("state", state)
                 }
                 Result.success(state)
             }

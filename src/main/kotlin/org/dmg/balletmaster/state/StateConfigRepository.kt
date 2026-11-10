@@ -2,6 +2,9 @@ package org.dmg.balletmaster.state
 
 import com.fasterxml.jackson.core.type.TypeReference
 import org.dmg.balletmaster.StepId
+import org.dmg.balletmaster.logging.BalletLoggers
+import org.dmg.balletmaster.logging.errorEvent
+import org.dmg.balletmaster.logging.infoEvent
 import org.dmg.balletmaster.store.Store
 import org.dmg.balletmaster.util.plus
 
@@ -43,7 +46,15 @@ class StoreStateConfigRepository(
 
     override fun <S : StepId, STATE : Any> save(config: StateConfig<S, STATE>): Result<Boolean> {
         val json = serializer.serialize(config)
-        val saveConfigResult = store.set(configKey(config.operationName, config.version), json)
+        val key = configKey(config.operationName, config.version)
+        val saveConfigResult = store.set(key, json)
+            .onFailure { ex ->
+                BalletLoggers.store.errorEvent("store.error", ex) {
+                    attr("op", config.operationName)
+                    attr("storeOp", "state_config_save")
+                    attr("key", key)
+                }
+            }
         if (saveConfigResult.isFailure || saveConfigResult.getOrNull() == false) {
             return saveConfigResult
         }
@@ -52,7 +63,20 @@ class StoreStateConfigRepository(
         if (config.version !in currentVersions) {
             val updatedVersions = currentVersions + config.version
             val versionsJson = serializer.mapper.writeValueAsString(updatedVersions)
-            store.set(versionsKey(config.operationName), versionsJson)
+            val vKey = versionsKey(config.operationName)
+            store.set(vKey, versionsJson)
+                .onFailure { ex ->
+                    BalletLoggers.store.errorEvent("store.error", ex) {
+                        attr("op", config.operationName)
+                        attr("storeOp", "state_versions_save")
+                        attr("key", vKey)
+                    }
+                }
+        }
+        BalletLoggers.state.infoEvent("state.config_saved") {
+            attr("op", config.operationName)
+            attr("version", config.version)
+            attr("rulesCount", config.rules.size)
         }
         return Result.success(true)
     }
@@ -64,17 +88,33 @@ class StoreStateConfigRepository(
         stateClass: Class<STATE>
     ): Result<StateConfig<S, STATE>?> {
         val key = configKey(operationName, version)
-        return store.get<String>(key).map { json ->
-            json?.let { serializer.deserialize(it, stepClass, stateClass) }
-        }
+        return store.get<String>(key)
+            .onFailure { ex ->
+                BalletLoggers.store.errorEvent("store.error", ex) {
+                    attr("op", operationName)
+                    attr("storeOp", "state_config_get")
+                    attr("key", key)
+                }
+            }
+            .map { json ->
+                json?.let { serializer.deserialize(it, stepClass, stateClass) }
+            }
     }
 
     override fun getVersions(operationName: String): Result<List<String>> {
         val key = versionsKey(operationName)
-        return store.get<String>(key).map { json ->
-            if (json == null) emptyList()
-            else serializer.mapper.readValue(json, object : TypeReference<List<String>>() {})
-        }
+        return store.get<String>(key)
+            .onFailure { ex ->
+                BalletLoggers.store.errorEvent("store.error", ex) {
+                    attr("op", operationName)
+                    attr("storeOp", "state_versions_get")
+                    attr("key", key)
+                }
+            }
+            .map { json ->
+                if (json == null) emptyList()
+                else serializer.mapper.readValue(json, object : TypeReference<List<String>>() {})
+            }
     }
 
     private fun configKey(operationName: String, version: String) =
