@@ -80,6 +80,7 @@ class StepExecutionExceptionTest {
                     caughtCause = ex.cause
                 }
             },
+            onError = {},
             onState = {},
             onSuccess = {}
         )
@@ -125,6 +126,7 @@ class StepExecutionExceptionTest {
                 assertEquals(OrderSteps.VALIDATE_ORDER, stepEx.stepId)
                 assertEquals(gateError, stepEx.cause)
             },
+            onError = {},
             onState = {},
             onSuccess = {}
         )

@@ -17,6 +17,7 @@ class TryTest {
         assertTrue(state1.isState)
         assertFalse(state1.isSuccess)
         assertFalse(state1.isFailure)
+        assertFalse(state1.isError)
     }
 
     @Test
@@ -31,6 +32,7 @@ class TryTest {
         assertTrue(success1.isSuccess)
         assertFalse(success1.isState)
         assertFalse(success1.isFailure)
+        assertFalse(success1.isError)
     }
 
     @Test
@@ -45,5 +47,61 @@ class TryTest {
         assertTrue(failure1.isFailure)
         assertFalse(failure1.isSuccess)
         assertFalse(failure1.isState)
+        assertFalse(failure1.isError)
+    }
+
+    @Test
+    fun errorEquality() {
+        val exception = RuntimeException("infra error")
+        val error1 = Try.error<String>(exception)
+        val error2 = Try.error<String>(exception)
+
+        assertEquals(error1, error2)
+        assertEquals(error1.hashCode(), error2.hashCode())
+        assertNotEquals(error1, Try.error<String>(RuntimeException("other")))
+        assertNotEquals(error1, Try.failure<String>(exception))
+        assertTrue(error1.isError)
+        assertFalse(error1.isSuccess)
+        assertFalse(error1.isFailure)
+        assertFalse(error1.isState)
+    }
+
+    @Test
+    fun foldAndCombinatorsPreserveError() {
+        val exception = IllegalStateException("store down")
+        val error = Try.error<String>(exception)
+
+        val folded = error.fold(
+            onFailure = { "failure" },
+            onError = { "error:${it.message}" },
+            onState = { "state" },
+            onSuccess = { "success" }
+        )
+        assertEquals("error:store down", folded)
+
+        var invoked = false
+        val afterThen = error.then {
+            invoked = true
+            Try.success("ok")
+        }
+        val afterAlso = error also { invoked = true }
+        val afterMap = error map {
+            invoked = true
+            Try.success("ok")
+        }
+        val afterAnd = error and {
+            invoked = true
+            Result.success("ok")
+        }
+
+        assertFalse(invoked)
+        assertEquals(error, afterThen)
+        assertEquals(error, afterAlso)
+        assertEquals(error, afterMap)
+        assertEquals(error, afterAnd)
+        assertTrue(afterThen.isError)
+        assertTrue(afterAlso.isError)
+        assertTrue(afterMap.isError)
+        assertTrue(afterAnd.isError)
     }
 }

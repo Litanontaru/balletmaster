@@ -57,6 +57,7 @@ class MilestoneTest {
 
             result.fold(
                 onFailure = { throw it },
+                onError = { throw it },
                 onState = { status ->
                     // Technical status means processing intentionally did not launch (e.g. BLOCKED, SKIP)
                     fail("Expected step to execute, but got technical status: $status")
