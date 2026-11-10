@@ -37,7 +37,7 @@ class Step<T : Any> private constructor(
 
     private fun nextComplex(action: (StepId, Try<T>) -> Try<T>): Step<T> = next { complex(action) }
 
-    private infix fun Throwable.on(stepId: StepId) =
+    private infix fun Exception.on(stepId: StepId) =
         if (this is StoreAccessException) Try.error<Nothing>(cause)
         else Try.failure(if (this is StepExecutionException) this else StepExecutionException(stepId, this))
 
@@ -52,7 +52,7 @@ class Step<T : Any> private constructor(
             } else {
                 Try.state(SKIP)
             }
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             e on stepId
         }
     }
@@ -62,7 +62,7 @@ class Step<T : Any> private constructor(
             if (it) {
                 fun execute() = try {
                     Try.success(next(context, input))
-                } catch (e: Throwable) {
+                } catch (e: Exception) {
                     e on stepId
                 } finally {
                     context.setPlay()
@@ -80,7 +80,7 @@ class Step<T : Any> private constructor(
         try {
             context.setSuffix(milestone(context, input))
             Try.success(input)
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             e on stepId
         }
     }

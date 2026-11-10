@@ -104,7 +104,7 @@ class ContextImpl(
                     action()
                 } catch (e: StoreAccessException) {
                     Try.error(e.cause)
-                } catch (e: Throwable) {
+                } catch (e: Exception) {
                     val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
                     Try.failure(wrapped)
                 }

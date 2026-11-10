@@ -5,6 +5,7 @@ import org.dmg.balletmaster.store.InMemoryStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicBoolean
@@ -130,5 +131,29 @@ class StepExecutionExceptionTest {
             onState = {},
             onSuccess = {}
         )
+    }
+
+    @Test
+    fun workflowDoesNotCatchJvmError() {
+        val store = InMemoryStore()
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        callContextManager.store("orderOp", "102", isReplay = false, attempt = 0)
+
+        try {
+            assertThrows(AssertionError::class.java) {
+                balletMaster
+                    .start()
+                    .step(OrderSteps.VALIDATE_ORDER)
+                    .map { _, _ -> throw AssertionError("JVM fatal error") }
+                    .checkPoint()
+                    .execute()
+            }
+        } finally {
+            callContextManager.clear()
+        }
+
+        assertNull(store.get<Try<*>>("orderOp:102:0::VALIDATE_ORDER:output").getOrThrow())
     }
 }
