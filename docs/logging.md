@@ -45,7 +45,7 @@
 | `ballet.operation` | Имя операции (`CallContext.operationName`) |
 | `ballet.operationId` | Идентификатор экземпляра операции (`CallContext.operationId`) |
 | `ballet.attempt` | Номер попытки (`CallContext.attempt`; `Int` в `KeyValuePair`, строка в `MDC`) |
-| `ballet.suffix` | Текущий суффикс шага / витка (`stepSuffix` / `operationSuffix`) |
+| `ballet.suffix` | Суффикс текущего шага (`stepSuffix` в рамках шага; для `milestone` фиксирует старый суффикс до перехода к следующему шагу) |
 | `ballet.step` | Идентификатор шага (`StepId`) |
 | `ballet.replay` | Признак режима `Replay` (`Boolean` в `KeyValuePair`, строка в `MDC`) |
 

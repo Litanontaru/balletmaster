@@ -109,15 +109,6 @@ internal object BalletMdc {
         } catch (_: Exception) {
         }
     }
-
-    fun updateSuffix(suffix: Any) {
-        try {
-            if (MDC.get(SUFFIX) != null) {
-                MDC.put(SUFFIX, safeToString(suffix))
-            }
-        } catch (_: Exception) {
-        }
-    }
 }
 
 internal fun safeToString(value: Any): String = try {

@@ -679,4 +679,59 @@ class LoggingTest {
             layout.stop()
         }
     }
+
+    @Test
+    fun mdcSuffixRemainsConsistentWithStepScopeAfterMilestoneUntilNextStep() {
+        val store = InMemoryStore()
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        callContextManager.store("mileMdcOp", "m-1", isReplay = false, attempt = 0, operationSuffix = "init")
+        try {
+            val result = balletMaster
+                .start()
+                .step(Steps.STEP_A)
+                .milestone { _, _ -> "phase-2" }
+                .map { _, _ ->
+                    appLogger.info("after-milestone-same-step")
+                    "from-A"
+                }
+                .checkPoint()
+                .step(Steps.STEP_B)
+                .map { _, input ->
+                    appLogger.info("next-step")
+                    "$input-B"
+                }
+                .execute()
+
+            assertEquals(Try.success("from-A-B"), result)
+        } finally {
+            callContextManager.clear()
+        }
+
+        val milestoneEvent = events("step.milestone_updated", Level.DEBUG).single()
+        assertEquals("init", milestoneEvent.attrs()[BalletMdc.SUFFIX])
+        assertEquals("init", milestoneEvent.mdcPropertyMap[BalletMdc.SUFFIX])
+        assertEquals("phase-2", milestoneEvent.attrs()["newSuffix"])
+
+        val sameStepUserLog = appender.list.first { it.formattedMessage == "after-milestone-same-step" }
+        assertEquals("init", sameStepUserLog.mdcPropertyMap[BalletMdc.SUFFIX])
+        assertEquals("STEP_A", sameStepUserLog.mdcPropertyMap[BalletMdc.STEP])
+
+        val checkpointEvent = events("step.checkpoint_saved", Level.DEBUG).single()
+        assertEquals("init", checkpointEvent.attrs()[BalletMdc.SUFFIX])
+        assertEquals("init", checkpointEvent.mdcPropertyMap[BalletMdc.SUFFIX])
+
+        val completedA = events("step.completed", Level.DEBUG).first { it.attrs()[BalletMdc.STEP] == "STEP_A" }
+        assertEquals("init", completedA.attrs()[BalletMdc.SUFFIX])
+        assertEquals("init", completedA.mdcPropertyMap[BalletMdc.SUFFIX])
+
+        val nextStepUserLog = appender.list.first { it.formattedMessage == "next-step" }
+        assertEquals("phase-2", nextStepUserLog.mdcPropertyMap[BalletMdc.SUFFIX])
+        assertEquals("STEP_B", nextStepUserLog.mdcPropertyMap[BalletMdc.STEP])
+
+        val completedB = events("step.completed", Level.DEBUG).first { it.attrs()[BalletMdc.STEP] == "STEP_B" }
+        assertEquals("phase-2", completedB.attrs()[BalletMdc.SUFFIX])
+        assertEquals("phase-2", completedB.mdcPropertyMap[BalletMdc.SUFFIX])
+    }
 }

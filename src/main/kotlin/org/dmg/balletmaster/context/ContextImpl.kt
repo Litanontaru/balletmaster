@@ -89,7 +89,6 @@ class ContextImpl(
 
     override fun setSuffix(suffix: Any) {
         onSetSuffix(suffix)
-        BalletMdc.updateSuffix(suffix)
     }
 
     override fun setInput(value: Any): Result<Boolean> {
