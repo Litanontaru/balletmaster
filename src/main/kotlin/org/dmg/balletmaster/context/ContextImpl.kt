@@ -17,11 +17,10 @@ class ContextImpl(
     private val store: Store,
     private val callProvider: () -> CallContext?,
     private val off: () -> Unit,
-    private val onSetSuffix: (Any) -> Unit = {}
+    private val onSetSuffix: (Any) -> Unit = {},
+    private val timeout: Long = 1000L
 ) : InternalContext {
     private val call: CallContext? get() = callProvider()
-
-    private val timeout = 1000L
 
     private var stepId: StepId = DefaultStep
     private var stepSuffix: Any = ""
@@ -66,7 +65,7 @@ class ContextImpl(
         off()
     }
 
-    private fun tryLock(): Result<Boolean> {
+    private fun tryLock(): Result<Long> {
         val deadline = currentTimeMillis() + timeout
 
         while (currentTimeMillis() <= deadline) {
@@ -79,7 +78,7 @@ class ContextImpl(
             }
 
             if (lockResult.isFailure || lockResult.getOrNull() == true) {
-                return lockResult
+                return lockResult.map { if (it) leaseUntil else 0L }
             }
 
             try {
@@ -90,16 +89,16 @@ class ContextImpl(
             }
         }
 
-        return Result.success(false)
+        return Result.success(0L)
     }
 
-    private fun unlock(): Result<Boolean> = store.set(key + "timeout", null)
+    private fun unlock(expected: Long): Result<Boolean> = store.set(key + "timeout", expected to null)
 
     override fun <R : Any> execute(action: () -> Try<R>): Try<R> = if (call == null) {
         Try.state(NO_CALL)
     } else {
         tryLock() and { acquired ->
-            if (acquired) {
+            if (acquired > 0L) {
                 val res = try {
                     action()
                 } catch (e: StoreAccessException) {
@@ -108,7 +107,7 @@ class ContextImpl(
                     val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
                     Try.failure(wrapped)
                 }
-                val unlockResult = unlock()
+                val unlockResult = unlock(acquired)
                 if (res.isError) res else unlockResult and res
             } else {
                 Try.state(BLOCKED)
