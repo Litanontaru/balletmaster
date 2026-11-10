@@ -11,8 +11,10 @@ class Step<T : Any> private constructor(
 ) {
     internal constructor(context: InternalContext) : this(context, Chain())
 
+    private data class StepConfig(val stepId: StepId)
+
     private class Chain {
-        val actions = ArrayList<Pair<StepId, MutableList<(StepId, Try<Any>) -> Try<Any>>>>()
+        val actions = ArrayList<Pair<StepConfig, MutableList<(StepId, Try<Any>) -> Try<Any>>>>()
 
         fun <T : Any, R : Any> simple(action: (StepId, T) -> Try<R>) {
             actions.lastOrNull()?.second?.add { stepId, inputTry ->
@@ -27,7 +29,7 @@ class Step<T : Any> private constructor(
         }
 
         fun addStep(stepId: StepId) {
-            actions.add(stepId to ArrayList())
+            actions.add(StepConfig(stepId) to ArrayList())
         }
     }
 
@@ -103,9 +105,9 @@ class Step<T : Any> private constructor(
 
     fun execute(): Try<T> {
         var input: Try<Any> = Try.success(Unit)
-        for ((stepId, steps) in chain.actions) {
-            context.setStep(stepId)
-            input = context.execute { steps.fold(input) { acc, action -> action(stepId, acc) } }
+        for ((config, steps) in chain.actions) {
+            context.setStep(config.stepId)
+            input = context.execute { steps.fold(input) { acc, action -> action(config.stepId, acc) } }
             if (!input.isSuccess) {
                 break
             }
