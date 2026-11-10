@@ -28,23 +28,29 @@ class ContextImplTest {
         val staleContext = ContextImpl(
             store = store,
             callProvider = { call },
-            off = {},
-            timeout = 50L
-        ).apply { setStep(Steps.STEP_A) }
+            off = {}
+        ).apply {
+            setStep(Steps.STEP_A)
+            setLease(50L)
+        }
 
         val newContext = ContextImpl(
             store = store,
             callProvider = { call },
-            off = {},
-            timeout = 1000L
-        ).apply { setStep(Steps.STEP_A) }
+            off = {}
+        ).apply {
+            setStep(Steps.STEP_A)
+            setLease(1000L)
+        }
 
         val probingContext = ContextImpl(
             store = store,
             callProvider = { call },
-            off = {},
-            timeout = 20L
-        ).apply { setStep(Steps.STEP_A) }
+            off = {}
+        ).apply {
+            setStep(Steps.STEP_A)
+            setLease(20L)
+        }
 
         val staleEntered = CountDownLatch(1)
         val releaseStale = CountDownLatch(1)

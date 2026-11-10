@@ -6,6 +6,7 @@ import org.dmg.balletmaster.Try
 
 interface InternalContext : Context {
     fun setStep(stepId: StepId)
+    fun setLease(lease: Long)
     fun setInput(value: Any): Result<Boolean>
     fun idempotencyGate(): Result<Boolean>
     fun setOutput(value: Try<Any>): Result<Boolean>

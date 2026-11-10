@@ -13,17 +13,19 @@ import java.lang.System.currentTimeMillis
 
 internal class StoreAccessException(override val cause: Throwable) : RuntimeException(cause)
 
+private const val DEFAULT_LEASE = 1000L
+
 class ContextImpl(
     private val store: Store,
     private val callProvider: () -> CallContext?,
     private val off: () -> Unit,
-    private val onSetSuffix: (Any) -> Unit = {},
-    private val timeout: Long = 1000L
+    private val onSetSuffix: (Any) -> Unit = {}
 ) : InternalContext {
     private val call: CallContext? get() = callProvider()
 
     private var stepId: StepId = DefaultStep
     private var stepSuffix: Any = ""
+    private var lease = DEFAULT_LEASE
 
     override val operationSuffix: Any get() = call?.operationSuffix ?: ""
 
@@ -45,6 +47,11 @@ class ContextImpl(
     override fun setStep(stepId: StepId) {
         this.stepId = stepId
         this.stepSuffix = operationSuffix
+        this.lease = DEFAULT_LEASE
+    }
+
+    override fun setLease(lease: Long) {
+        this.lease = lease
     }
 
     override fun setSuffix(suffix: Any) {
@@ -66,11 +73,11 @@ class ContextImpl(
     }
 
     private fun tryLock(): Result<Long> {
-        val deadline = currentTimeMillis() + timeout
+        val deadline = currentTimeMillis() + lease
 
         while (currentTimeMillis() <= deadline) {
             val now = currentTimeMillis()
-            val leaseUntil = now + timeout
+            val leaseUntil = now + lease
 
             val lockResult = store.set(key + "timeout", null to leaseUntil) + {
                 if (it) Result.success(it)
