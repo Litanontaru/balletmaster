@@ -104,4 +104,14 @@ class TryTest {
         assertTrue(afterMap.isError)
         assertTrue(afterAnd.isError)
     }
+
+    @Test
+    fun tryAndConvertsResultFailureToError() {
+        val storeEx = IllegalStateException("redis unreachable")
+        val res = Try.success("ok") and { Result.failure<String>(storeEx) }
+
+        assertTrue(res.isError)
+        assertFalse(res.isFailure)
+        assertEquals(Try.error<String>(storeEx), res)
+    }
 }

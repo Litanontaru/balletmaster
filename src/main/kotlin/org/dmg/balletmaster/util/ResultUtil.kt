@@ -8,7 +8,7 @@ operator fun <T, R> Result<T>.plus(action: (T) -> Result<R>): Result<R> {
 }
 
 infix fun <T, R> Result<T>.and(action: (T) -> Try<R>): Try<R> {
-    return this.fold(action, Try.Companion::failure)
+    return this.fold(action, Try.Companion::error)
 }
 
 fun <T> Result<T?>.notNull(): Result<T> = this.fold(
@@ -16,5 +16,5 @@ fun <T> Result<T?>.notNull(): Result<T> = this.fold(
 )
 
 infix fun <T, R> Result<T>.and(value: Try<R>): Try<R> {
-    return this.fold({ value }, Try.Companion::failure)
+    return this.fold({ value }, Try.Companion::error)
 }

@@ -11,11 +11,13 @@ import org.dmg.balletmaster.util.and
 import org.dmg.balletmaster.util.plus
 import java.lang.System.currentTimeMillis
 
+internal class StoreAccessException(override val cause: Throwable) : RuntimeException(cause)
+
 class ContextImpl(
     private val store: Store,
     private val callProvider: () -> CallContext?,
     private val off: () -> Unit,
-    private val onSetSuffix: (Any) -> Unit = {},
+    private val onSetSuffix: (Any) -> Unit = {}
 ) : InternalContext {
     private val call: CallContext? get() = callProvider()
 
@@ -36,7 +38,10 @@ class ContextImpl(
     private val originalKey: String get() = aKey(stepId, call?.attempt?.takeIf { it > 0 }?.let { it - 1 }, stepSuffix)
 
     override fun isDone(stepId: StepId) =
-        store.get<Try<*>>(key(stepId) + "output").fold({ it?.isSuccess == true }, { false })
+        store.get<Try<*>>(key(stepId) + "output").fold(
+            onSuccess = { it?.isSuccess == true },
+            onFailure = { throw StoreAccessException(it) }
+        )
 
     override fun setStep(stepId: StepId) {
         this.stepId = stepId
@@ -61,11 +66,8 @@ class ContextImpl(
         off()
     }
 
-    override fun <R : Any> execute(action: () -> Try<R>): Try<R> = if (call == null) {
-        Try.state(NO_CALL)
-    } else {
+    private fun tryLock(): Result<Boolean> {
         val deadline = currentTimeMillis() + timeout
-        var acquired = false
 
         while (currentTimeMillis() <= deadline) {
             val now = currentTimeMillis()
@@ -76,9 +78,8 @@ class ContextImpl(
                 else store.set(key + "timeout", lessThen(now) to leaseUntil)
             }
 
-            if (lockResult.fold({ it }, { false })) {
-                acquired = true
-                break
+            if (lockResult.isFailure || lockResult.getOrNull() == true) {
+                return lockResult
             }
 
             try {
@@ -89,16 +90,29 @@ class ContextImpl(
             }
         }
 
-        if (acquired) {
-            try {
-                val res = action()
-                store.set(key + "timeout", null) and res
-            } catch (e: Throwable) {
-                val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
-                store.set(key + "timeout", null) and Try.failure(wrapped)
+        return Result.success(false)
+    }
+
+    private fun unlock(): Result<Boolean> = store.set(key + "timeout", null)
+
+    override fun <R : Any> execute(action: () -> Try<R>): Try<R> = if (call == null) {
+        Try.state(NO_CALL)
+    } else {
+        tryLock() and { acquired ->
+            if (acquired) {
+                val res = try {
+                    action()
+                } catch (e: StoreAccessException) {
+                    Try.error(e.cause)
+                } catch (e: Throwable) {
+                    val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
+                    Try.failure(wrapped)
+                }
+                val unlockResult = unlock()
+                if (res.isError) res else unlockResult and res
+            } else {
+                Try.state(BLOCKED)
             }
-        } else {
-            Try.state(BLOCKED)
         }
     }
 }

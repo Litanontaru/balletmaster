@@ -1,6 +1,7 @@
 package org.dmg.balletmaster
 
 import org.dmg.balletmaster.context.InternalContext
+import org.dmg.balletmaster.context.StoreAccessException
 import org.dmg.balletmaster.context.TechStatus.SKIP
 import org.dmg.balletmaster.util.and
 
@@ -36,8 +37,9 @@ class Step<T : Any> private constructor(
 
     private fun nextComplex(action: (StepId, Try<T>) -> Try<T>): Step<T> = next { complex(action) }
 
-    private infix fun Throwable.wrapped(stepId: StepId) =
-        if (this is StepExecutionException) this else StepExecutionException(stepId, this)
+    private infix fun Throwable.on(stepId: StepId) =
+        if (this is StoreAccessException) Try.error<Nothing>(cause)
+        else Try.failure(if (this is StepExecutionException) this else StepExecutionException(stepId, this))
 
     infix fun <R : Any> input(value: R): Step<R> = nextSimple { _, _ ->
         context.setInput(value) and { Try.success(value) }
@@ -51,7 +53,7 @@ class Step<T : Any> private constructor(
                 Try.state(SKIP)
             }
         } catch (e: Throwable) {
-            Try.failure(e wrapped stepId)
+            e on stepId
         }
     }
 
@@ -61,7 +63,7 @@ class Step<T : Any> private constructor(
                 fun execute() = try {
                     Try.success(next(context, input))
                 } catch (e: Throwable) {
-                    Try.failure(e wrapped stepId)
+                    e on stepId
                 } finally {
                     context.setPlay()
                 }
@@ -79,15 +81,15 @@ class Step<T : Any> private constructor(
             context.setSuffix(milestone(context, input))
             Try.success(input)
         } catch (e: Throwable) {
-            Try.failure(e wrapped stepId)
+            e on stepId
         }
     }
 
     fun checkPoint(): Step<T> = nextComplex { _, output ->
-        if (output.isState) {
+        if (output.isState || output.isError) {
             output
         } else {
-            context.setOutput(output).fold({ output }, Try.Companion::failure)
+            context.setOutput(output) and output
         }
     }
 

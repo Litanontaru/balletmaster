@@ -79,5 +79,5 @@ infix fun <T, R> Try<T>.map(value: (T) -> Try<R>) =
 
 infix fun <T, R> Try<T>.and(value: (T) -> Result<R>): Try<R> =
     fold(Try.Companion::failure, Try.Companion::error, Try.Companion::state) {
-        value(it).fold(Try.Companion::success, Try.Companion::failure)
+        value(it).fold(Try.Companion::success, Try.Companion::error)
     }
