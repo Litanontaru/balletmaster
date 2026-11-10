@@ -466,4 +466,80 @@ class LoggingTest {
         assertTrue(msg.contains("empty=\"\""))
         assertTrue(msg.contains("plain=ok_123"))
     }
+
+    @Test
+    fun failingAppenderDoesNotBreakExecutionOrLeakLease() {
+        val throwingAppender = object : AppenderBase<ILoggingEvent>() {
+            override fun doAppend(eventObject: ILoggingEvent) {
+                throw RuntimeException("Simulated appender outage")
+            }
+
+            override fun append(eventObject: ILoggingEvent) = Unit
+        }.apply { start() }
+
+        val store = InMemoryStore()
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        sdkLogger.addAppender(throwingAppender)
+        callContextManager.store("loggingFailOp", "op-fail-1", isReplay = false, attempt = 0, operationSuffix = "init")
+        try {
+            val chainResult = balletMaster
+                .start()
+                .step(Steps.STEP_A)
+                .map { _, _ -> "ok" }
+                .checkPoint()
+                .execute()
+            assertEquals(Try.success("ok"), chainResult)
+
+            val ctx = ContextImpl(store, { callContextManager.get() }, {}).apply {
+                setStep(Steps.STEP_B)
+                setLease(5_000L)
+            }
+            val directResult = ctx.execute { Try.success("step-b-ok") }
+            assertEquals(Try.success("step-b-ok"), directResult)
+
+            sdkLogger.detachAppender(throwingAppender)
+
+            // Lease acquired under failing appender must have been released cleanly
+            val nextCtx = ContextImpl(store, { callContextManager.get() }, {}).apply {
+                setStep(Steps.STEP_B)
+                setLease(5_000L)
+            }
+            val reacquireResult = nextCtx.execute { Try.success("reacquired") }
+            assertEquals(Try.success("reacquired"), reacquireResult)
+        } finally {
+            sdkLogger.detachAppender(throwingAppender)
+            throwingAppender.stop()
+            callContextManager.clear()
+        }
+    }
+
+    @Test
+    fun failingToStringInMdcAndLogAttributesDoesNotBreakExecution() {
+        val brokenSuffix = object {
+            override fun toString(): String = throw IllegalStateException("suffix toString boom")
+        }
+
+        val attrMsg = buildEventMessage("test.safe") {
+            attr("bad", brokenSuffix)
+            attr("good", "ok")
+        }
+        assertTrue(attrMsg.contains("bad=<toString_error:IllegalStateException>"))
+        assertTrue(attrMsg.contains("good=ok"))
+
+        MDC.put("traceId", "trace-safe")
+        val call = CallContext("mdcFailOp", "id-1", isReplay = false, attempt = 0)
+        val result = BalletMdc.withStepContext(call, Steps.STEP_A, brokenSuffix) {
+            assertEquals("mdcFailOp", MDC.get(BalletMdc.OPERATION))
+            assertEquals("STEP_A", MDC.get(BalletMdc.STEP))
+            assertEquals("<toString_error:IllegalStateException>", MDC.get(BalletMdc.SUFFIX))
+            "done"
+        }
+
+        assertEquals("done", result)
+        assertEquals("trace-safe", MDC.get("traceId"))
+        assertNull(MDC.get(BalletMdc.OPERATION))
+        assertNull(MDC.get(BalletMdc.STEP))
+    }
 }

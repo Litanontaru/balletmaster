@@ -60,46 +60,69 @@ internal object BalletMdc {
     }
 
     @PublishedApi
-    internal fun snapshot(): Array<String?> = Array(KEYS.size) { index -> MDC.get(KEYS[index]) }
-
-    @PublishedApi
-    internal fun applyStepContext(call: CallContext?, stepId: StepId, suffix: Any) {
-        if (call != null) {
-            MDC.put(OPERATION, call.operationName.toString())
-            MDC.put(OPERATION_ID, call.operationId.toString())
-            MDC.put(ATTEMPT, call.attempt.toString())
-            MDC.put(SUFFIX, suffix.toString())
-            MDC.put(REPLAY, call.isReplay.toString())
-        } else {
-            MDC.remove(OPERATION)
-            MDC.remove(OPERATION_ID)
-            MDC.remove(ATTEMPT)
-            MDC.remove(SUFFIX)
-            MDC.remove(REPLAY)
-        }
-        MDC.put(STEP, stepId.toString())
+    internal fun snapshot(): Array<String?>? = try {
+        Array(KEYS.size) { index -> MDC.get(KEYS[index]) }
+    } catch (_: Exception) {
+        null
     }
 
     @PublishedApi
-    internal fun restore(previous: Array<String?>) {
-        for (index in KEYS.indices) {
-            val value = previous[index]
-            if (value == null) MDC.remove(KEYS[index])
-            else MDC.put(KEYS[index], value)
+    internal fun applyStepContext(call: CallContext?, stepId: StepId, suffix: Any) {
+        try {
+            if (call != null) {
+                MDC.put(OPERATION, safeToString(call.operationName))
+                MDC.put(OPERATION_ID, safeToString(call.operationId))
+                MDC.put(ATTEMPT, call.attempt.toString())
+                MDC.put(SUFFIX, safeToString(suffix))
+                MDC.put(REPLAY, call.isReplay.toString())
+            } else {
+                MDC.remove(OPERATION)
+                MDC.remove(OPERATION_ID)
+                MDC.remove(ATTEMPT)
+                MDC.remove(SUFFIX)
+                MDC.remove(REPLAY)
+            }
+            MDC.put(STEP, safeToString(stepId))
+        } catch (_: Exception) {
+        }
+    }
+
+    @PublishedApi
+    internal fun restore(previous: Array<String?>?) {
+        if (previous == null) return
+        try {
+            for (index in KEYS.indices) {
+                val value = previous[index]
+                if (value == null) MDC.remove(KEYS[index])
+                else MDC.put(KEYS[index], value)
+            }
+        } catch (_: Exception) {
         }
     }
 
     fun updateReplay(isReplay: Boolean) {
-        if (MDC.get(REPLAY) != null) {
-            MDC.put(REPLAY, isReplay.toString())
+        try {
+            if (MDC.get(REPLAY) != null) {
+                MDC.put(REPLAY, isReplay.toString())
+            }
+        } catch (_: Exception) {
         }
     }
 
     fun updateSuffix(suffix: Any) {
-        if (MDC.get(SUFFIX) != null) {
-            MDC.put(SUFFIX, suffix.toString())
+        try {
+            if (MDC.get(SUFFIX) != null) {
+                MDC.put(SUFFIX, safeToString(suffix))
+            }
+        } catch (_: Exception) {
         }
     }
+}
+
+internal fun safeToString(value: Any): String = try {
+    value.toString()
+} catch (e: Exception) {
+    "<toString_error:${e.javaClass.simpleName}>"
 }
 
 /**
@@ -123,9 +146,10 @@ internal class LogAttrs {
 
     fun attr(key: String, value: Any?) {
         if (value == null) return
+        val rendered = safeToString(value)
         if (builder.isNotEmpty()) builder.append(' ')
         builder.append(key).append('=')
-        appendFormatted(value.toString())
+        appendFormatted(rendered)
     }
 
     fun format(event: String): String =
@@ -169,34 +193,49 @@ internal inline fun buildEventMessage(event: String, attrs: LogAttrs.() -> Unit)
     LogAttrs().apply(attrs).format(event)
 
 internal inline fun Logger.traceEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
-    if (isTraceEnabled) {
-        trace(buildEventMessage(event, attrs))
+    try {
+        if (isTraceEnabled) {
+            trace(buildEventMessage(event, attrs))
+        }
+    } catch (_: Exception) {
     }
 }
 
 internal inline fun Logger.debugEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
-    if (isDebugEnabled) {
-        debug(buildEventMessage(event, attrs))
+    try {
+        if (isDebugEnabled) {
+            debug(buildEventMessage(event, attrs))
+        }
+    } catch (_: Exception) {
     }
 }
 
 internal inline fun Logger.infoEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
-    if (isInfoEnabled) {
-        info(buildEventMessage(event, attrs))
+    try {
+        if (isInfoEnabled) {
+            info(buildEventMessage(event, attrs))
+        }
+    } catch (_: Exception) {
     }
 }
 
 internal inline fun Logger.warnEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
-    if (isWarnEnabled) {
-        val msg = buildEventMessage(event, attrs)
-        if (throwable != null) warn(msg, throwable) else warn(msg)
+    try {
+        if (isWarnEnabled) {
+            val msg = buildEventMessage(event, attrs)
+            if (throwable != null) warn(msg, throwable) else warn(msg)
+        }
+    } catch (_: Exception) {
     }
 }
 
 internal inline fun Logger.errorEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
-    if (isErrorEnabled) {
-        val msg = buildEventMessage(event, attrs)
-        if (throwable != null) error(msg, throwable) else error(msg)
+    try {
+        if (isErrorEnabled) {
+            val msg = buildEventMessage(event, attrs)
+            if (throwable != null) error(msg, throwable) else error(msg)
+        }
+    } catch (_: Exception) {
     }
 }
 
