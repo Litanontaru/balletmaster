@@ -8,17 +8,18 @@ import org.dmg.balletmaster.util.and
 class Step<T : Any>(
     private val stepId: StepId,
     private val context: InternalContext,
-    internal val action: () -> Try<T>,
+    private val prev: Step<*>? = null,
+    internal val action: (Try<Any>) -> Try<T>,
 ) {
     private fun Throwable.wrapped() =
         if (this is StepExecutionException) this else StepExecutionException(stepId, this)
 
-    infix fun <R : Any> input(value: R) = Step(stepId, context) {
-        action() map { context.setInput(value) and { Try.success(value) } }
+    infix fun <R : Any> input(value: R) = Step(stepId, context, prev) { prevResult ->
+        action(prevResult) map { context.setInput(value) and { Try.success(value) } }
     }
 
-    infix fun gate(gate: (Context, T) -> Boolean) = Step(stepId, context) {
-        action() map { input ->
+    infix fun gate(gate: (Context, T) -> Boolean) = Step(stepId, context, prev) { prevResult ->
+        action(prevResult) map { input ->
             try {
                 if (gate(context, input)) {
                     Try.success(input)
@@ -31,8 +32,8 @@ class Step<T : Any>(
         }
     }
 
-    infix fun <R : Any> map(next: (Context, T) -> R) = Step(stepId, context) {
-        action() map { input ->
+    infix fun <R : Any> map(next: (Context, T) -> R) = Step(stepId, context, prev) { prevResult ->
+        action(prevResult) map { input ->
             context.idempotencyGate() and {
                 if (it) {
                     fun execute() = try {
@@ -52,14 +53,14 @@ class Step<T : Any>(
         }
     }
 
-    infix fun milestone(milestone: (Context, T) -> Any) = Step(stepId, context) {
-        action() also { input ->
+    infix fun milestone(milestone: (Context, T) -> Any) = Step(stepId, context, prev) { prevResult ->
+        action(prevResult) also { input ->
             context.setSuffix(milestone(context, input))
         }
     }
 
-    fun checkPoint() = Step(stepId, context) {
-        val output = action()
+    fun checkPoint() = Step(stepId, context, prev) { prevResult ->
+        val output = action(prevResult)
         if (output.isState) {
             output
         } else {
@@ -67,17 +68,28 @@ class Step<T : Any>(
         }
     }
 
-    infix fun step(stepId: StepId): Step<T> {
-        val output = execute()
-        return Step(stepId, context) { output also { context.setInput(it) } }
+    infix fun step(stepId: StepId): Step<T> = Step(stepId, context, prev = this) { prevResult ->
+        @Suppress("UNCHECKED_CAST")
+        (prevResult as Try<T>) also { context.setInput(it) }
     }
 
     fun execute(): Try<T> {
+        val prevResult: Try<Any> = if (prev != null) {
+            val res = prev.execute()
+            if (!res.isSuccess) {
+                @Suppress("UNCHECKED_CAST")
+                return res as Try<T>
+            }
+            res
+        } else {
+            Try.success(Unit)
+        }
+
         context.setStep(this.stepId)
         return if (this.stepId == DefaultStep) {
-            action()
+            action(prevResult)
         } else {
-            context.execute(action)
+            context.execute { action(prevResult) }
         }
     }
 }
