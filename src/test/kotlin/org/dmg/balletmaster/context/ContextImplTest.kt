@@ -108,4 +108,30 @@ class ContextImplTest {
         assertTrue(newResult.get().isSuccess)
         assertNull(store.get<Long>(lockKey).getOrThrow())
     }
+
+    @Test
+    fun releasesLeaseEvenWhenActionThrowsError() {
+        val store = InMemoryStore()
+        val call = CallContext("errOp", "1", isReplay = false, attempt = 0)
+        val lockKey = "errOp:1:0::STEP_A:timeout"
+
+        val context = ContextImpl(store, { call }, {}).apply {
+            setStep(Steps.STEP_A)
+            setLease(5_000L)
+        }
+
+        val thrown = org.junit.jupiter.api.Assertions.assertThrows(AssertionError::class.java) {
+            context.execute<String> {
+                throw AssertionError("fatal step error")
+            }
+        }
+        assertEquals("fatal step error", thrown.message)
+        assertNull(store.get<Long>(lockKey).getOrThrow())
+
+        val nextContext = ContextImpl(store, { call }, {}).apply {
+            setStep(Steps.STEP_A)
+            setLease(5_000L)
+        }
+        assertEquals(Try.success("ok"), nextContext.execute { Try.success("ok") })
+    }
 }

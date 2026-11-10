@@ -228,25 +228,34 @@ class ContextImpl(
                 tryLock() and { acquired ->
                     if (acquired > 0L) {
                         val startNanos = System.nanoTime()
-                        BalletLoggers.step.debugEvent("step.started") {
-                            correlation(call, stepId, stepSuffix)
-                            attr("leaseMs", lease)
-                            attr("replay", isReplay())
-                        }
-                        val res = try {
-                            action()
-                        } catch (e: StoreAccessException) {
-                            Try.error(e.cause)
-                        } catch (e: Exception) {
-                            val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
-                            BalletLoggers.step.warnEvent("step.exception", wrapped) {
+                        var res: Try<R>
+                        var unlockResult: Result<Boolean>
+                        try {
+                            BalletLoggers.step.debugEvent("step.started") {
                                 correlation(call, stepId, stepSuffix)
-                                attr("phase", "execute")
-                                attr("exception", e.javaClass.simpleName)
+                                attr("leaseMs", lease)
+                                attr("replay", isReplay())
                             }
-                            Try.failure(wrapped)
+                            res = try {
+                                action()
+                            } catch (e: StoreAccessException) {
+                                Try.error(e.cause)
+                            } catch (e: Exception) {
+                                val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
+                                BalletLoggers.step.warnEvent("step.exception", wrapped) {
+                                    correlation(call, stepId, stepSuffix)
+                                    attr("phase", "execute")
+                                    attr("exception", e.javaClass.simpleName)
+                                }
+                                Try.failure(wrapped)
+                            }
+                        } finally {
+                            unlockResult = try {
+                                unlock(acquired)
+                            } catch (e: Exception) {
+                                Result.failure(e)
+                            }
                         }
-                        val unlockResult = unlock(acquired)
                         val finalRes = if (res.isError) res else unlockResult and res
                         BalletLoggers.step.debugEvent("step.completed") {
                             correlation(call, stepId, stepSuffix)
