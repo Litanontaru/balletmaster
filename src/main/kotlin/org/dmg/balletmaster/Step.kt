@@ -13,28 +13,30 @@ class Step<T : Any> private constructor(
 ) {
     internal constructor(context: InternalContext) : this(context, Chain())
 
-    private data class StepConfig(
+    private class StepEntry(
         val stepId: StepId,
         var lease: Long? = null
-    )
+    ) {
+        val actions = ArrayList<(StepId, Try<Any>) -> Try<Any>>()
+    }
 
     private class Chain {
-        val actions = ArrayList<Pair<StepConfig, MutableList<(StepId, Try<Any>) -> Try<Any>>>>()
+        val steps = ArrayList<StepEntry>()
 
         fun <T : Any, R : Any> simple(action: (StepId, T) -> Try<R>) {
-            actions.lastOrNull()?.second?.add { stepId, inputTry ->
+            steps.lastOrNull()?.actions?.add { stepId, input ->
                 @Suppress("UNCHECKED_CAST")
-                inputTry.map { input -> action(stepId, input as T) }
+                input.map { value -> action(stepId, value as T) }
             }
         }
 
         fun <R : Any> complex(action: (StepId, Try<R>) -> Try<R>) {
             @Suppress("UNCHECKED_CAST")
-            actions.lastOrNull()?.second?.add(action as ((StepId, Try<Any>) -> Try<Any>))
+            steps.lastOrNull()?.actions?.add(action as ((StepId, Try<Any>) -> Try<Any>))
         }
 
         fun addStep(stepId: StepId) {
-            actions.add(StepConfig(stepId) to ArrayList())
+            steps += StepEntry(stepId)
         }
     }
 
@@ -43,6 +45,13 @@ class Step<T : Any> private constructor(
     private fun <R : Any> nextSimple(action: (StepId, T) -> Try<R>): Step<R> = next { simple(action) }
 
     private fun nextComplex(action: (StepId, Try<T>) -> Try<T>): Step<T> = next { complex(action) }
+
+    private inline fun <R : Any> tryStep(stepId: StepId, phase: String, block: () -> Try<R>): Try<R> =
+        try {
+            block()
+        } catch (e: Exception) {
+            e.toStepResult(stepId, phase)
+        }
 
     private fun Exception.toStepResult(stepId: StepId, phase: String): Try<Nothing> =
         if (this is StoreAccessException) {
@@ -58,15 +67,13 @@ class Step<T : Any> private constructor(
     }
 
     infix fun gate(gate: (Context, T) -> Boolean): Step<T> = nextSimple { stepId, input ->
-        try {
+        tryStep(stepId, "gate") {
             if (gate(context, input)) {
                 Try.success(input)
             } else {
                 StepLog.skippedGate(context, stepId)
                 Try.state(SKIP)
             }
-        } catch (e: Exception) {
-            e.toStepResult(stepId, "gate")
         }
     }
 
@@ -96,22 +103,15 @@ class Step<T : Any> private constructor(
 
     private fun <R : Any> executeMap(stepId: StepId, input: T, next: (Context, T) -> R): Try<R> {
         context.setPlay()
-        return try {
-            Try.success(next(context, input))
-        } catch (e: Exception) {
-            e.toStepResult(stepId, "map")
-        }
+        return tryStep(stepId, "map") { Try.success(next(context, input)) }
     }
 
     infix fun milestone(milestone: (Context, T) -> Any): Step<T> = nextSimple { stepId, input ->
-        try {
+        tryStep(stepId, "milestone") {
             val oldSuffix = StepLog.currentSuffix(context)
-            val newSuffix = milestone(context, input)
-            context.setSuffix(newSuffix)
+            val newSuffix = milestone(context, input).also(context::setSuffix)
             StepLog.milestoneUpdated(context, stepId, oldSuffix, newSuffix)
             Try.success(input)
-        } catch (e: Exception) {
-            e.toStepResult(stepId, "milestone")
         }
     }
 
@@ -126,7 +126,7 @@ class Step<T : Any> private constructor(
     }
 
     infix fun step(stepId: StepId): Step<T> = next {
-        val hasPrev = actions.isNotEmpty()
+        val hasPrev = steps.isNotEmpty()
         addStep(stepId)
         if (hasPrev) {
             simple<T, T> { _, input -> context.setInput(input) and { Try.success(input) } }
@@ -139,31 +139,31 @@ class Step<T : Any> private constructor(
      */
     infix fun lease(lease: Long): Step<T> = next {
         require(lease > 0) { "Lease must be positive, got $lease" }
-        actions.lastOrNull()?.first?.lease = lease
+        steps.lastOrNull()?.lease = lease
     }
 
     fun execute(): Try<T> = BalletMdc.withChainContext(StepLog.currentCall(context)) {
         val startNanos = StepLog.startTimer()
-        val totalSteps = chain.actions.size
-        StepLog.chainStarted(context, totalSteps) { chain.actions.joinToString(",") { it.first.stepId.toString() } }
+        val totalSteps = chain.steps.size
+        StepLog.chainStarted(context, totalSteps) { chain.steps.joinToString(",") { it.stepId.toString() } }
 
-        var input: Try<Any> = Try.success(Unit)
-        for (index in chain.actions.indices) {
-            val (config, steps) = chain.actions[index]
-            context.setStep(config.stepId)
-            config.lease?.let(context::setLease)
-            input = context.execute { steps.fold(input) { acc, action -> action(config.stepId, acc) } }
-            if (!input.isSuccess) {
-                StepLog.chainStopped(context, config.stepId, index + 1, totalSteps, input, startNanos)
+        var result: Try<Any> = Try.success(Unit)
+        for (index in chain.steps.indices) {
+            val step = chain.steps[index]
+            context.setStep(step.stepId)
+            step.lease?.let(context::setLease)
+            result = context.execute { step.actions.fold(result) { acc, action -> action(step.stepId, acc) } }
+            if (!result.isSuccess) {
+                StepLog.chainStopped(context, step.stepId, index + 1, totalSteps, result, startNanos)
                 break
             }
         }
 
-        if (input.isSuccess) {
+        if (result.isSuccess) {
             StepLog.chainCompleted(context, totalSteps, startNanos)
         }
 
         @Suppress("UNCHECKED_CAST")
-        input as Try<T>
+        result as Try<T>
     }
 }
