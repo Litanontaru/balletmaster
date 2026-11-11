@@ -117,6 +117,12 @@ internal fun safeToString(value: Any): String = try {
     "<toString_error:${e.javaClass.simpleName}>"
 }
 
+internal fun safeStateLabel(state: Any): String =
+    if (state is Enum<*>) state.name else state.javaClass.simpleName.ifEmpty { state.javaClass.name }
+
+internal fun safeExceptionName(throwable: Throwable): String =
+    throwable.javaClass.simpleName.ifEmpty { throwable.javaClass.name }
+
 /**
  * Builder for structured SLF4J 2.0 event key-value attributes without exposing user payloads.
  */

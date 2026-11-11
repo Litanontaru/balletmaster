@@ -45,6 +45,8 @@ class LoggingTest {
         TODO
     }
 
+    data class CustomProcessState(val status: String, val customerSecret: String)
+
     private class SnapshottingListAppender : AppenderBase<ILoggingEvent>() {
         private val items = mutableListOf<ILoggingEvent>()
 
@@ -298,43 +300,60 @@ class LoggingTest {
     }
 
     @Test
-    fun stepExceptionLogsDebugWithCauseAndStopsChain() {
+    fun stepExceptionLogsClassWithoutSensitiveMessageAndStopsChain() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
         val balletMaster = BalletMaster(store, callContextManager)
+        var returnedFailure: Try<String>
 
         callContextManager.store("failOp", "88", isReplay = false, attempt = 0)
         try {
             val res = balletMaster
                 .start()
                 .step(Steps.STEP_A)
-                .map { _, _ -> throw IllegalArgumentException("bad-order") }
+                .map { _, _ -> throw IllegalArgumentException("bad-order secret=CARD_4111_SENSITIVE") }
                 .checkPoint()
                 .step(Steps.STEP_B)
                 .map { _, _ -> "never" }
                 .execute()
+            returnedFailure = res
             assertTrue(res.isFailure)
 
             val fallbackCtx = ContextImpl(store, { callContextManager.get() }, {}).apply {
                 setStep(Steps.STEP_B)
             }
-            val fallbackRes = fallbackCtx.execute<String> { throw IllegalStateException("unexpected-execute-boom") }
+            val fallbackRes = fallbackCtx.execute<String> { throw IllegalStateException("secret=TOKEN_999") }
             assertTrue(fallbackRes.isFailure)
         } finally {
             callContextManager.clear()
         }
 
+        val returnedCause = returnedFailure.fold({ it }, { null }, { null }, { null }) as? StepExecutionException
+        assertNotNull(returnedCause)
+        assertTrue(returnedCause?.cause?.message?.contains("CARD_4111_SENSITIVE") == true)
+
         val exEvents = events("step.exception", Level.DEBUG)
         assertEquals(1, exEvents.size)
         assertEquals("map", exEvents[0].attrs()["phase"])
+        assertEquals("IllegalArgumentException", exEvents[0].attrs()["exception"])
         assertEquals("STEP_A", exEvents[0].attrs()[BalletMdc.STEP])
-        assertNotNull(exEvents[0].throwableProxy)
-        assertEquals(StepExecutionException::class.java.name, exEvents[0].throwableProxy.className)
+        assertNull(exEvents[0].throwableProxy)
 
         val fallbackEvents = events("step.exception", Level.WARN)
         assertEquals(1, fallbackEvents.size)
         assertEquals("execute", fallbackEvents[0].attrs()["phase"])
+        assertEquals("IllegalStateException", fallbackEvents[0].attrs()["exception"])
         assertEquals("STEP_B", fallbackEvents[0].attrs()[BalletMdc.STEP])
+        assertNull(fallbackEvents[0].throwableProxy)
+
+        assertTrue(appender.list.none { event ->
+            event.formattedMessage.contains("CARD_4111_SENSITIVE") ||
+                event.formattedMessage.contains("TOKEN_999") ||
+                event.attrs().values.any {
+                    val str = it?.toString() ?: ""
+                    str.contains("CARD_4111_SENSITIVE") || str.contains("TOKEN_999")
+                }
+        })
 
         val stopped = events("chain.stopped", Level.DEBUG)
         assertEquals(1, stopped.size)
@@ -890,5 +909,28 @@ class LoggingTest {
         val storeErrors = events("store.error", Level.ERROR)
         assertEquals(1, storeErrors.size)
         assertEquals("state_versions_save", storeErrors[0].attrs()["storeOp"])
+    }
+
+    @Test
+    fun supervisorResolveStateDoesNotCallToStringOrLeakFieldsForNonEnumState() {
+        val store = InMemoryStore()
+        val balletMaster = BalletMaster(store, CallContextManager())
+        val supervisor = ProcessSupervisor(store)
+
+        val secretState = CustomProcessState(status = "PENDING", customerSecret = "SECRET_PAN_4111")
+        balletMaster.defineStates<Steps, CustomProcessState>("customStateOp", "1.0.0") {
+            state(CustomProcessState("DONE", "OK")) { step(Steps.STEP_A) }
+            defaultState(secretState)
+        }
+
+        val resolved = supervisor.resolveState<Steps, CustomProcessState>("customStateOp", "op-secret-1")
+        assertEquals(Result.success(secretState), resolved)
+
+        val resolvedEvent = events("state.resolved", Level.DEBUG).single()
+        assertEquals("CustomProcessState", resolvedEvent.attrs()["state"])
+        assertTrue(appender.list.none { event ->
+            event.formattedMessage.contains("SECRET_PAN_4111") ||
+                event.attrs().values.any { it?.toString()?.contains("SECRET_PAN_4111") == true }
+        })
     }
 }

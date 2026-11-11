@@ -9,6 +9,7 @@ import org.dmg.balletmaster.logging.LoggingContext
 import org.dmg.balletmaster.logging.debugEvent
 import org.dmg.balletmaster.logging.elapsedMillis
 import org.dmg.balletmaster.logging.outcomeLabel
+import org.dmg.balletmaster.logging.safeExceptionName
 import org.dmg.balletmaster.logging.startDebugTimer
 import org.dmg.balletmaster.logging.stateStatusOrNull
 import org.dmg.balletmaster.logging.traceEvent
@@ -61,10 +62,10 @@ class Step<T : Any> private constructor(
             Try.error(cause)
         } else {
             val wrapped = if (this is StepExecutionException) this else StepExecutionException(stepId, this)
-            BalletLoggers.step.debugEvent("step.exception", wrapped) {
+            BalletLoggers.step.debugEvent("step.exception") {
                 correlation(logCall(), stepId, logSuffix())
                 attr("phase", phase)
-                attr("exception", this@toStepResult.javaClass.simpleName)
+                attr("exception", safeExceptionName(this@toStepResult))
             }
             Try.failure(wrapped)
         }

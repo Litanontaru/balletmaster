@@ -13,6 +13,7 @@ import org.dmg.balletmaster.logging.elapsedMillis
 import org.dmg.balletmaster.logging.errorEvent
 import org.dmg.balletmaster.logging.infoEvent
 import org.dmg.balletmaster.logging.outcomeLabel
+import org.dmg.balletmaster.logging.safeExceptionName
 import org.dmg.balletmaster.logging.startDebugTimer
 import org.dmg.balletmaster.logging.startWarnTimer
 import org.dmg.balletmaster.logging.stateStatusOrNull
@@ -243,10 +244,10 @@ class ContextImpl(
                                 Try.error(e.cause)
                             } catch (e: Exception) {
                                 val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
-                                BalletLoggers.step.warnEvent("step.exception", wrapped) {
+                                BalletLoggers.step.warnEvent("step.exception") {
                                     correlation(call, stepId, stepSuffix)
                                     attr("phase", "execute")
-                                    attr("exception", e.javaClass.simpleName)
+                                    attr("exception", safeExceptionName(e))
                                 }
                                 Try.failure(wrapped)
                             }

@@ -6,6 +6,7 @@ import org.dmg.balletmaster.logging.BalletLoggers
 import org.dmg.balletmaster.logging.BalletMdc
 import org.dmg.balletmaster.logging.debugEvent
 import org.dmg.balletmaster.logging.errorEvent
+import org.dmg.balletmaster.logging.safeStateLabel
 import org.dmg.balletmaster.logging.warnEvent
 import org.dmg.balletmaster.store.Store
 import org.dmg.balletmaster.util.plus
@@ -77,7 +78,7 @@ class ProcessSupervisor(
                         attr(BalletMdc.SUFFIX, suffix)
                         attr("version", config.version)
                         attr("versionPrefix", versionPrefix)
-                        attr("state", state)
+                        attr("state", safeStateLabel(state))
                     }
                     Result.success(state)
                 } catch (e: SupervisorStoreReadException) {

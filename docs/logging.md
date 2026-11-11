@@ -6,7 +6,7 @@
 
 Ключевые принципы реализации:
 * **Интеграция через SLF4J 2.0:** используется только `org.slf4j:slf4j-api` версии 2.0+ (`LoggerFactory`, `Logger`, `LoggingEventBuilder` / `addKeyValue`, `MDC`) без собственного JSON-форматирования. Приложение-хост само подключает и настраивает совместимый бэкенд (Logback 1.4+/1.5+, Log4j2 через `log4j-slf4j2-impl` и т.д.).
-* **Нулевые потери безопасности (PII-safe):** по умолчанию SDK никогда не записывает в логи содержимое пользовательских `input`/`output`, аргументы бизнес-лямбд или секреты — логируются только метаданные исполнения, идентификаторы корреляции, статусы, длительность и исключения.
+* **Минимизация утечек чувствительных данных:** SDK не записывает в логи содержимое пользовательских `input`/`output` и аргументы бизнес-лямбд; для бизнес-исключений (`step.exception`) фиксируется только имя класса исключения без `message` и stack trace (полное исключение возвращается приложению через `Try.failure`), а для не-`Enum` состояний в `state.resolved` логируется только имя класса без вызова `toString()`. При этом идентификаторы (`ballet.operation`, `ballet.operationId`, `ballet.suffix`), сформированные из них ключи `Store` (`key`) и инфраструктурные исключения `store.error` / `lock.wait_interrupted` передаются в логи как есть — приложение не должно помещать секреты или PII в идентификаторы операций, суффиксы и сообщения драйвера `Store`.
 * **Минимальные накладные расходы:** построение атрибутов обёрнуто в `isTraceEnabled` / `isDebugEnabled` / `isInfoEnabled` / `isWarnEnabled` / `isErrorEnabled`, поэтому выключенные уровни не создают лишних аллокаций.
 * **Тишина на нормальном трафике (`INFO`):** штатные операции на каждый шаг пишутся в `DEBUG` и `TRACE`. На `INFO` фиксируются только редкие значимые события смены режима/конфигурации (`replay.switched_to_live`, `state.config_saved`), на `WARN` — аномалии конкурентности, отсутствие контекста и непредвиденные сбои (бизнес-исключения шагов пишутся в `DEBUG` и возвращаются через `Try.failure`), на `ERROR` — инфраструктурные ошибки `Store`.
 
@@ -68,7 +68,7 @@
 | `step.milestone_updated` | `DEBUG` | `milestone` обновил `operationSuffix` (`ballet.suffix`, `newSuffix`) |
 | `step.checkpoint_saved` | `DEBUG` | `checkPoint` сохранил `Success` или `Failure` в `Store` (`outcome`) |
 | `step.checkpoint_bypassed` | `TRACE` | `checkPoint` пропустил запись для `State` или `Error` (`outcome`, `status`) |
-| `step.exception` | `DEBUG` / `WARN` | Бизнес-исключение внутри `gate`/`map`/`milestone` (`DEBUG`) или непредвиденный fallback-перехват в `ContextImpl.execute` (`WARN`), завёрнутые в `StepExecutionException` (`phase`, `exception`, stack trace) |
+| `step.exception` | `DEBUG` / `WARN` | Бизнес-исключение внутри `gate`/`map`/`milestone` (`DEBUG`) или непредвиденный fallback-перехват в `ContextImpl.execute` (`WARN`); логируется только класс исключения без `message`/stack trace (`phase`, `exception`) |
 | `step.no_call` | `WARN` | Шаг вызван без активного `CallContext` в `CallContextManager` (`ballet.step`, `status=NO_CALL`) |
 
 ### 4.2 `org.dmg.balletmaster.lock`
@@ -98,7 +98,7 @@
 | Событие | Уровень | Описание и основные атрибуты |
 |---|---|---|
 | `state.config_saved` | `INFO` | Зарегистрирована конфигурация состояний процесса (`ballet.operation`, `version`, `rulesCount`) |
-| `state.resolved` | `DEBUG` | Вычислено текущее состояние процесса в `ProcessSupervisor` (`ballet.operation`, `ballet.operationId`, `ballet.attempt`, `ballet.suffix`, `version`, `versionPrefix`, `state`) |
+| `state.resolved` | `DEBUG` | Вычислено текущее состояние процесса в `ProcessSupervisor` (`ballet.operation`, `ballet.operationId`, `ballet.attempt`, `ballet.suffix`, `version`, `versionPrefix`, `state` — `Enum.name` или имя класса) |
 | `state.config_not_found` | `WARN` | Конфигурация состояний не найдена (`ballet.operation`, `versionPrefix`) |
 
 ---
