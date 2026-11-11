@@ -60,12 +60,14 @@ class StoreStateConfigRepository(
             return saveConfigResult
         }
 
-        val currentVersions = getVersions(config.operationName).fold({ it }, { emptyList() })
+        val currentVersions = getVersions(config.operationName).getOrElse { ex ->
+            return Result.failure(ex)
+        }
         if (config.version !in currentVersions) {
             val updatedVersions = currentVersions + config.version
             val versionsJson = serializer.mapper.writeValueAsString(updatedVersions)
             val vKey = versionsKey(config.operationName)
-            store.set(vKey, versionsJson)
+            val saveVersionsResult = store.set(vKey, versionsJson)
                 .onFailure { ex ->
                     BalletLoggers.store.errorEvent("store.error", ex) {
                         attr(BalletMdc.OPERATION, config.operationName)
@@ -73,6 +75,9 @@ class StoreStateConfigRepository(
                         attr("key", vKey)
                     }
                 }
+            if (saveVersionsResult.isFailure || saveVersionsResult.getOrNull() == false) {
+                return saveVersionsResult
+            }
         }
         BalletLoggers.state.infoEvent("state.config_saved") {
             attr(BalletMdc.OPERATION, config.operationName)

@@ -15,6 +15,8 @@ import org.dmg.balletmaster.logging.elapsedMillis
 import org.dmg.balletmaster.logging.startDebugTimer
 import org.dmg.balletmaster.logging.startWarnTimer
 import org.dmg.balletmaster.state.ProcessSupervisor
+import org.dmg.balletmaster.state.StoreStateConfigRepository
+import org.dmg.balletmaster.state.processStates
 import org.dmg.balletmaster.state.resolveState
 import org.dmg.balletmaster.store.InMemoryStore
 import org.dmg.balletmaster.store.Store
@@ -781,5 +783,101 @@ class LoggingTest {
         assertEquals("false", all[switchedIdx].mdcPropertyMap[BalletMdc.REPLAY])
         assertEquals("false", all[userBodyIdx].mdcPropertyMap[BalletMdc.REPLAY])
         assertEquals("false", all[exIdx].mdcPropertyMap[BalletMdc.REPLAY])
+    }
+
+    @Test
+    fun supervisorResolveStateReturnsFailureAndSkipsResolvedLogWhenStoreReadFails() {
+        val delegate = InMemoryStore()
+        val storeErr = RuntimeException("store read unavailable")
+        val failingStore = object : Store by delegate {
+            override fun <T : Any> get(key: String): Result<T?> =
+                if (key.endsWith(":STEP_A:output")) Result.failure(storeErr) else delegate.get(key)
+        }
+        val balletMaster = BalletMaster(failingStore, CallContextManager())
+        val supervisor = ProcessSupervisor(failingStore)
+
+        balletMaster.defineStates<Steps, States>("supFailOp", "1.0.0") {
+            state(States.DONE) { step(Steps.STEP_A) }
+            defaultState(States.TODO)
+        }
+
+        val resolved = supervisor.resolveState<Steps, States>("supFailOp", "op-err-1")
+        assertTrue(resolved.isFailure)
+        assertEquals(storeErr, resolved.exceptionOrNull())
+        assertTrue(events("state.resolved").isEmpty())
+
+        val storeErrors = events("store.error", Level.ERROR)
+        assertEquals(1, storeErrors.size)
+        val attrs = storeErrors[0].attrs()
+        assertEquals("supervisor_step_check", attrs["storeOp"])
+        assertEquals("supFailOp", attrs[BalletMdc.OPERATION])
+        assertEquals("op-err-1", attrs[BalletMdc.OPERATION_ID])
+        assertEquals("STEP_A", attrs[BalletMdc.STEP])
+        assertEquals("supFailOp:op-err-1:0::STEP_A:output", attrs["key"])
+    }
+
+    @Test
+    fun stateConfigSaveReturnsFailureWithoutOverwritingVersionsOrLoggingSavedWhenGetVersionsFails() {
+        val delegate = InMemoryStore()
+        var failVersionsGet = false
+        val readErr = RuntimeException("versions read failed")
+        val store = object : Store by delegate {
+            override fun <T : Any> get(key: String): Result<T?> =
+                if (failVersionsGet && key == "config:cfgGetFail:versions") Result.failure(readErr)
+                else delegate.get(key)
+        }
+        val repo = StoreStateConfigRepository(store)
+
+        val v1 = processStates<Steps, States>("cfgGetFail", "1.0.0") {
+            state(States.DONE) { step(Steps.STEP_A) }
+            defaultState(States.TODO)
+        }
+        assertEquals(Result.success(true), repo.save(v1))
+
+        val v2 = processStates<Steps, States>("cfgGetFail", "2.0.0") {
+            state(States.DONE) { step(Steps.STEP_B) }
+            defaultState(States.TODO)
+        }
+        failVersionsGet = true
+        val v2Save = repo.save(v2)
+        failVersionsGet = false
+
+        assertTrue(v2Save.isFailure)
+        assertEquals(readErr, v2Save.exceptionOrNull())
+        assertEquals(listOf("1.0.0"), repo.getVersions("cfgGetFail").getOrThrow())
+
+        val savedEvents = events("state.config_saved", Level.INFO)
+        assertEquals(1, savedEvents.size)
+        assertEquals("1.0.0", savedEvents[0].attrs()["version"])
+
+        val storeErrors = events("store.error", Level.ERROR)
+        assertEquals(1, storeErrors.size)
+        assertEquals("state_versions_get", storeErrors[0].attrs()["storeOp"])
+    }
+
+    @Test
+    fun stateConfigSaveReturnsFailureAndDoesNotLogSavedWhenSaveVersionsFails() {
+        val delegate = InMemoryStore()
+        val writeErr = RuntimeException("versions write failed")
+        val store = object : Store by delegate {
+            override fun set(key: String, value: Any?): Result<Boolean> =
+                if (key == "config:cfgSaveFail:versions") Result.failure(writeErr)
+                else delegate.set(key, value)
+        }
+        val repo = StoreStateConfigRepository(store)
+
+        val config = processStates<Steps, States>("cfgSaveFail", "1.0.0") {
+            state(States.DONE) { step(Steps.STEP_A) }
+            defaultState(States.TODO)
+        }
+        val res = repo.save(config)
+
+        assertTrue(res.isFailure)
+        assertEquals(writeErr, res.exceptionOrNull())
+        assertTrue(events("state.config_saved", Level.INFO).isEmpty())
+
+        val storeErrors = events("store.error", Level.ERROR)
+        assertEquals(1, storeErrors.size)
+        assertEquals("state_versions_save", storeErrors[0].attrs()["storeOp"])
     }
 }

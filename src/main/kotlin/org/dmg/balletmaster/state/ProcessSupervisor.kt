@@ -10,6 +10,8 @@ import org.dmg.balletmaster.logging.warnEvent
 import org.dmg.balletmaster.store.Store
 import org.dmg.balletmaster.util.plus
 
+private class SupervisorStoreReadException(override val cause: Throwable) : RuntimeException(cause)
+
 /**
  * Supervisor component responsible for inspecting, observing, and resolving
  * the current business state of a process instance based on stored execution facts
@@ -48,32 +50,39 @@ class ProcessSupervisor(
                 }
                 Result.failure(NoSuchElementException("StateConfig not found for operation='$operationName' with versionPrefix='$versionPrefix'"))
             } else {
-                val state = config.evaluate { stepId ->
-                    val key = "${operationName}:${operationId}:${attempt}:${suffix}:${stepId}:output"
-                    store.get<Try<*>>(key)
-                        .onFailure { ex ->
-                            BalletLoggers.store.errorEvent("store.error", ex) {
-                                attr(BalletMdc.OPERATION, operationName)
-                                attr(BalletMdc.OPERATION_ID, operationId)
-                                attr(BalletMdc.ATTEMPT, attempt)
-                                attr(BalletMdc.SUFFIX, suffix)
-                                attr(BalletMdc.STEP, stepId)
-                                attr("storeOp", "supervisor_step_check")
-                                attr("key", key)
+                try {
+                    val state = config.evaluate { stepId ->
+                        val key = "${operationName}:${operationId}:${attempt}:${suffix}:${stepId}:output"
+                        store.get<Try<*>>(key)
+                            .onFailure { ex ->
+                                BalletLoggers.store.errorEvent("store.error", ex) {
+                                    attr(BalletMdc.OPERATION, operationName)
+                                    attr(BalletMdc.OPERATION_ID, operationId)
+                                    attr(BalletMdc.ATTEMPT, attempt)
+                                    attr(BalletMdc.SUFFIX, suffix)
+                                    attr(BalletMdc.STEP, stepId)
+                                    attr("storeOp", "supervisor_step_check")
+                                    attr("key", key)
+                                }
                             }
-                        }
-                        .fold({ it?.isSuccess == true }, { false })
+                            .fold(
+                                onSuccess = { it?.isSuccess == true },
+                                onFailure = { throw SupervisorStoreReadException(it) }
+                            )
+                    }
+                    BalletLoggers.state.debugEvent("state.resolved") {
+                        attr(BalletMdc.OPERATION, operationName)
+                        attr(BalletMdc.OPERATION_ID, operationId)
+                        attr(BalletMdc.ATTEMPT, attempt)
+                        attr(BalletMdc.SUFFIX, suffix)
+                        attr("version", config.version)
+                        attr("versionPrefix", versionPrefix)
+                        attr("state", state)
+                    }
+                    Result.success(state)
+                } catch (e: SupervisorStoreReadException) {
+                    Result.failure(e.cause)
                 }
-                BalletLoggers.state.debugEvent("state.resolved") {
-                    attr(BalletMdc.OPERATION, operationName)
-                    attr(BalletMdc.OPERATION_ID, operationId)
-                    attr(BalletMdc.ATTEMPT, attempt)
-                    attr(BalletMdc.SUFFIX, suffix)
-                    attr("version", config.version)
-                    attr("versionPrefix", versionPrefix)
-                    attr("state", state)
-                }
-                Result.success(state)
             }
         }
     }
