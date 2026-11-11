@@ -25,11 +25,14 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
+import org.slf4j.spi.MDCAdapter
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -1017,6 +1020,173 @@ class LoggingTest {
 
         assertEquals("outer-trace", MDC.get("traceId"))
         assertEquals("outer-step", MDC.get(BalletMdc.STEP))
+        assertNull(MDC.get(BalletMdc.OPERATION))
+    }
+
+    private fun <T> withFaultyMdcAdapter(
+        wrap: (delegate: MDCAdapter) -> MDCAdapter,
+        block: () -> T
+    ): T {
+        val field = MDC::class.java.getDeclaredField("MDC_ADAPTER").apply { isAccessible = true }
+        val original = field.get(null) as MDCAdapter
+        field.set(null, wrap(original))
+        return try {
+            block()
+        } finally {
+            field.set(null, original)
+        }
+    }
+
+    @Test
+    fun mdcDoesNotModifyContextWhenSnapshotPartiallyFailsOnRead() {
+        MDC.put("traceId", "t-read")
+        MDC.put(BalletMdc.OPERATION, "outer-op")
+        MDC.put(BalletMdc.STEP, "outer-step")
+
+        var writesAttempted = 0
+        val call = CallContext("inner-op", "inner-1", isReplay = false, attempt = 2)
+
+        val result = withFaultyMdcAdapter({ delegate ->
+            object : MDCAdapter by delegate {
+                override fun get(key: String?): String? {
+                    if (key == BalletMdc.STEP) throw RuntimeException("mdc read fail")
+                    return delegate.get(key)
+                }
+
+                override fun put(key: String?, value: String?) {
+                    writesAttempted++
+                    delegate.put(key, value)
+                }
+
+                override fun remove(key: String?) {
+                    writesAttempted++
+                    delegate.remove(key)
+                }
+            }
+        }) {
+            BalletMdc.withStepContext(call, Steps.STEP_A, "inner-suffix") {
+                assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+                assertNull(MDC.get(BalletMdc.OPERATION_ID))
+                "ok"
+            }
+        }
+
+        assertEquals("ok", result)
+        assertEquals(0, writesAttempted)
+        assertEquals("t-read", MDC.get("traceId"))
+        assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+        assertEquals("outer-step", MDC.get(BalletMdc.STEP))
+        assertNull(MDC.get(BalletMdc.OPERATION_ID))
+    }
+
+    @Test
+    fun mdcRollsBackPartialWritesWhenApplyContextPartiallyFails() {
+        MDC.put("traceId", "t-write")
+        MDC.put(BalletMdc.OPERATION, "outer-op")
+        MDC.put(BalletMdc.STEP, "outer-step")
+
+        val call = CallContext("inner-op", "inner-1", isReplay = false, attempt = 2)
+        val result = withFaultyMdcAdapter({ delegate ->
+            object : MDCAdapter by delegate {
+                override fun put(key: String?, value: String?) {
+                    if (key == BalletMdc.OPERATION_ID && value == "inner-1") {
+                        throw RuntimeException("mdc write fail")
+                    }
+                    delegate.put(key, value)
+                }
+            }
+        }) {
+            BalletMdc.withStepContext(call, Steps.STEP_A, "inner-suffix") {
+                assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+                assertEquals("outer-step", MDC.get(BalletMdc.STEP))
+                assertNull(MDC.get(BalletMdc.OPERATION_ID))
+                "done"
+            }
+        }
+
+        assertEquals("done", result)
+        assertEquals("t-write", MDC.get("traceId"))
+        assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+        assertEquals("outer-step", MDC.get(BalletMdc.STEP))
+        assertNull(MDC.get(BalletMdc.OPERATION_ID))
+        assertNull(MDC.get(BalletMdc.ATTEMPT))
+        assertNull(MDC.get(BalletMdc.SUFFIX))
+        assertNull(MDC.get(BalletMdc.REPLAY))
+    }
+
+    @Test
+    fun mdcRestoresRemainingKeysWhenRestorePartiallyFailsAndPreservesUserExceptions() {
+        MDC.put("traceId", "t-restore")
+        MDC.put(BalletMdc.OPERATION, "outer-op")
+
+        val call = CallContext("inner-op", "inner-1", isReplay = true, attempt = 3)
+        val userBoom = IllegalStateException("user business exception")
+
+        val thrown = withFaultyMdcAdapter({ delegate ->
+            object : MDCAdapter by delegate {
+                override fun remove(key: String?) {
+                    if (key == BalletMdc.OPERATION_ID) {
+                        throw RuntimeException("mdc remove fail")
+                    }
+                    delegate.remove(key)
+                }
+            }
+        }) {
+            assertThrows(IllegalStateException::class.java) {
+                BalletMdc.withStepContext(call, Steps.STEP_A, "s1") {
+                    assertEquals("inner-op", MDC.get(BalletMdc.OPERATION))
+                    assertEquals("inner-1", MDC.get(BalletMdc.OPERATION_ID))
+                    assertEquals("STEP_A", MDC.get(BalletMdc.STEP))
+                    throw userBoom
+                }
+            }
+        }
+
+        assertSame(userBoom, thrown)
+        assertEquals("t-restore", MDC.get("traceId"))
+        assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+        // Non-failing keys after OPERATION_ID must still be cleaned up
+        assertNull(MDC.get(BalletMdc.ATTEMPT))
+        assertNull(MDC.get(BalletMdc.SUFFIX))
+        assertNull(MDC.get(BalletMdc.STEP))
+        assertNull(MDC.get(BalletMdc.REPLAY))
+        // Boundary: OPERATION_ID itself could not be removed because provider threw on remove
+        assertEquals("inner-1", MDC.get(BalletMdc.OPERATION_ID))
+    }
+
+    @Test
+    fun mdcNestedChainAndStepContextsRestoreProperly() {
+        MDC.put("traceId", "t-nested")
+        MDC.put(BalletMdc.STEP, "host-step")
+
+        val outerCall = CallContext("outer-op", "o-1", isReplay = false, attempt = 0, operationSuffix = "s0")
+        val innerCall = CallContext("inner-op", "i-2", isReplay = true, attempt = 1, operationSuffix = "s1")
+
+        BalletMdc.withChainContext(outerCall) {
+            assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+            assertNull(MDC.get(BalletMdc.STEP))
+
+            BalletMdc.withStepContext(outerCall, Steps.STEP_A, "s0") {
+                assertEquals("STEP_A", MDC.get(BalletMdc.STEP))
+
+                BalletMdc.withStepContext(innerCall, Steps.STEP_B, "s1") {
+                    assertEquals("inner-op", MDC.get(BalletMdc.OPERATION))
+                    assertEquals("i-2", MDC.get(BalletMdc.OPERATION_ID))
+                    assertEquals("STEP_B", MDC.get(BalletMdc.STEP))
+                    assertEquals("true", MDC.get(BalletMdc.REPLAY))
+                }
+
+                assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+                assertEquals("STEP_A", MDC.get(BalletMdc.STEP))
+                assertEquals("false", MDC.get(BalletMdc.REPLAY))
+            }
+
+            assertEquals("outer-op", MDC.get(BalletMdc.OPERATION))
+            assertNull(MDC.get(BalletMdc.STEP))
+        }
+
+        assertEquals("t-nested", MDC.get("traceId"))
+        assertEquals("host-step", MDC.get(BalletMdc.STEP))
         assertNull(MDC.get(BalletMdc.OPERATION))
     }
 }

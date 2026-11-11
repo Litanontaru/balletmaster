@@ -48,7 +48,8 @@ internal object BalletMdc {
     const val STEP = "ballet.step"
     const val REPLAY = "ballet.replay"
 
-    private val KEYS = arrayOf(OPERATION, OPERATION_ID, ATTEMPT, SUFFIX, STEP, REPLAY)
+    private val OPERATION_KEYS = arrayOf(OPERATION, OPERATION_ID, ATTEMPT, SUFFIX, REPLAY)
+    private val KEYS = arrayOf(OPERATION, OPERATION_ID, ATTEMPT, SUFFIX, REPLAY, STEP)
 
     inline fun <T> withChainContext(call: CallContext?, block: () -> T): T =
         withContext(call, stepId = null, suffix = call?.operationSuffix ?: "", block = block)
@@ -58,8 +59,10 @@ internal object BalletMdc {
 
     @PublishedApi
     internal inline fun <T> withContext(call: CallContext?, stepId: StepId?, suffix: Any, block: () -> T): T {
-        val previous = snapshot()
-        applyContext(call, stepId, suffix)
+        val previous = snapshot() ?: return block()
+        if (!applyContext(call, stepId, suffix)) {
+            restore(previous)
+        }
         return try {
             block()
         } finally {
@@ -75,41 +78,36 @@ internal object BalletMdc {
     }
 
     @PublishedApi
-    internal fun applyContext(call: CallContext?, stepId: StepId?, suffix: Any) {
-        try {
-            if (call != null) {
-                MDC.put(OPERATION, safeToString(call.operationName))
-                MDC.put(OPERATION_ID, safeToString(call.operationId))
-                MDC.put(ATTEMPT, call.attempt.toString())
-                MDC.put(SUFFIX, safeToString(suffix))
-                MDC.put(REPLAY, call.isReplay.toString())
-            } else {
-                MDC.remove(OPERATION)
-                MDC.remove(OPERATION_ID)
-                MDC.remove(ATTEMPT)
-                MDC.remove(SUFFIX)
-                MDC.remove(REPLAY)
+    internal fun applyContext(call: CallContext?, stepId: StepId?, suffix: Any): Boolean {
+        var allApplied = true
+        if (call != null) {
+            if (!setMdcValue(OPERATION, safeToString(call.operationName))) allApplied = false
+            if (!setMdcValue(OPERATION_ID, safeToString(call.operationId))) allApplied = false
+            if (!setMdcValue(ATTEMPT, call.attempt.toString())) allApplied = false
+            if (!setMdcValue(SUFFIX, safeToString(suffix))) allApplied = false
+            if (!setMdcValue(REPLAY, call.isReplay.toString())) allApplied = false
+        } else {
+            for (key in OPERATION_KEYS) {
+                if (!setMdcValue(key, null)) allApplied = false
             }
-            if (stepId != null) {
-                MDC.put(STEP, safeToString(stepId))
-            } else {
-                MDC.remove(STEP)
-            }
-        } catch (_: Exception) {
         }
+        if (!setMdcValue(STEP, stepId?.let(::safeToString))) allApplied = false
+        return allApplied
     }
 
     @PublishedApi
     internal fun restore(previous: Array<String?>?) {
         if (previous == null) return
-        try {
-            for (index in KEYS.indices) {
-                val value = previous[index]
-                if (value == null) MDC.remove(KEYS[index])
-                else MDC.put(KEYS[index], value)
-            }
-        } catch (_: Exception) {
+        for (index in KEYS.indices) {
+            setMdcValue(KEYS[index], previous[index])
         }
+    }
+
+    private fun setMdcValue(key: String, value: String?): Boolean = try {
+        if (value == null) MDC.remove(key) else MDC.put(key, value)
+        true
+    } catch (_: Exception) {
+        false
     }
 
     fun updateReplay(isReplay: Boolean) {
