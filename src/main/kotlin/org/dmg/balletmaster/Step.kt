@@ -5,6 +5,7 @@ import org.dmg.balletmaster.context.InternalContext
 import org.dmg.balletmaster.context.StoreAccessException
 import org.dmg.balletmaster.context.TechStatus.SKIP
 import org.dmg.balletmaster.logging.BalletLoggers
+import org.dmg.balletmaster.logging.BalletMdc
 import org.dmg.balletmaster.logging.LoggingContext
 import org.dmg.balletmaster.logging.debugEvent
 import org.dmg.balletmaster.logging.elapsedMillis
@@ -187,7 +188,7 @@ class Step<T : Any> private constructor(
         actions.lastOrNull()?.first?.lease = lease
     }
 
-    fun execute(): Try<T> {
+    fun execute(): Try<T> = BalletMdc.withChainContext(logCall()) {
         val startNanos = BalletLoggers.step.startDebugTimer()
         val totalSteps = chain.actions.size
 
@@ -207,6 +208,7 @@ class Step<T : Any> private constructor(
             config.lease?.let(context::setLease)
             input = context.execute { steps.fold(input) { acc, action -> action(config.stepId, acc) } }
             if (!input.isSuccess) {
+                BalletMdc.applyContext(logCall(), config.stepId, logSuffix())
                 BalletLoggers.step.debugEvent("chain.stopped") {
                     correlation(logCall(), config.stepId, logSuffix())
                     attr("executedSteps", executedSteps)
@@ -220,14 +222,16 @@ class Step<T : Any> private constructor(
         }
 
         if (input.isSuccess && totalSteps > 0) {
+            val currentCall = logCall()
+            BalletMdc.applyContext(currentCall, null, currentCall?.operationSuffix ?: "")
             BalletLoggers.step.debugEvent("chain.completed") {
-                correlation(logCall())
+                correlation(currentCall)
                 attr("stepsCount", totalSteps)
                 attr("durationMs", elapsedMillis(startNanos))
             }
         }
 
         @Suppress("UNCHECKED_CAST")
-        return input as Try<T>
+        input as Try<T>
     }
 }

@@ -487,6 +487,9 @@ class LoggingTest {
         val resolvedEvents = events("state.resolved", Level.DEBUG)
         assertEquals(1, resolvedEvents.size)
         assertEquals("TODO", resolvedEvents[0].attrs()["state"])
+        assertNull(resolvedEvents[0].mdcPropertyMap[BalletMdc.OPERATION])
+        assertEquals("supOp", resolvedEvents[0].attrs()[BalletMdc.OPERATION])
+        assertEquals("10", resolvedEvents[0].attrs()[BalletMdc.OPERATION_ID])
 
         val notFound = events("state.config_not_found", Level.WARN)
         assertEquals(1, notFound.size)
@@ -687,9 +690,13 @@ class LoggingTest {
         val completed = events("step.completed", Level.DEBUG).single()
         assertTrue(completed.attrs()["durationMs"] is Long)
 
-        // Chain events happen outside step MDC scope yet still carry correlation KeyValuePairs
+        // Chain events carry operation-level MDC (without step) alongside structured KeyValuePairs
         val chainStarted = events("chain.started", Level.DEBUG).single()
-        assertNull(chainStarted.mdcPropertyMap[BalletMdc.OPERATION])
+        assertEquals("kvOp", chainStarted.mdcPropertyMap[BalletMdc.OPERATION])
+        assertEquals("ord-kv-7", chainStarted.mdcPropertyMap[BalletMdc.OPERATION_ID])
+        assertEquals("2", chainStarted.mdcPropertyMap[BalletMdc.ATTEMPT])
+        assertEquals("v1", chainStarted.mdcPropertyMap[BalletMdc.SUFFIX])
+        assertNull(chainStarted.mdcPropertyMap[BalletMdc.STEP])
         assertEquals("kvOp", chainStarted.attrs()[BalletMdc.OPERATION])
         assertEquals("ord-kv-7", chainStarted.attrs()[BalletMdc.OPERATION_ID])
         assertEquals(2, chainStarted.attrs()[BalletMdc.ATTEMPT])
@@ -932,5 +939,84 @@ class LoggingTest {
             event.formattedMessage.contains("SECRET_PAN_4111") ||
                 event.attrs().values.any { it?.toString()?.contains("SECRET_PAN_4111") == true }
         })
+    }
+
+    @Test
+    fun chainEventsCarryConsistentMdcAndRestoreOuterMdcAfterExecution() {
+        val store = InMemoryStore()
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        MDC.put("traceId", "outer-trace")
+        MDC.put(BalletMdc.STEP, "outer-step")
+
+        callContextManager.store("chainMdcOp", "ch-1", isReplay = false, attempt = 0, operationSuffix = "init")
+        try {
+            val completedResult = balletMaster
+                .start()
+                .step(Steps.STEP_A)
+                .map { _, _ -> "a" }
+                .milestone { _, _ -> "phase-2" }
+                .checkPoint()
+                .step(Steps.STEP_B)
+                .map { _, input -> "$input-b" }
+                .execute()
+            assertEquals(Try.success("a-b"), completedResult)
+        } finally {
+            callContextManager.clear()
+        }
+
+        val chainStarted = events("chain.started", Level.DEBUG).single { it.attrs()[BalletMdc.OPERATION] == "chainMdcOp" }
+        assertEquals("outer-trace", chainStarted.mdcPropertyMap["traceId"])
+        assertEquals("chainMdcOp", chainStarted.mdcPropertyMap[BalletMdc.OPERATION])
+        assertEquals("ch-1", chainStarted.mdcPropertyMap[BalletMdc.OPERATION_ID])
+        assertEquals("0", chainStarted.mdcPropertyMap[BalletMdc.ATTEMPT])
+        assertEquals("init", chainStarted.mdcPropertyMap[BalletMdc.SUFFIX])
+        assertEquals("false", chainStarted.mdcPropertyMap[BalletMdc.REPLAY])
+        assertNull(chainStarted.mdcPropertyMap[BalletMdc.STEP])
+
+        val chainCompleted = events("chain.completed", Level.DEBUG).single()
+        assertEquals("outer-trace", chainCompleted.mdcPropertyMap["traceId"])
+        assertEquals("chainMdcOp", chainCompleted.mdcPropertyMap[BalletMdc.OPERATION])
+        assertEquals("ch-1", chainCompleted.mdcPropertyMap[BalletMdc.OPERATION_ID])
+        assertEquals("phase-2", chainCompleted.mdcPropertyMap[BalletMdc.SUFFIX])
+        assertEquals("phase-2", chainCompleted.attrs()[BalletMdc.SUFFIX])
+        assertEquals("false", chainCompleted.mdcPropertyMap[BalletMdc.REPLAY])
+        assertNull(chainCompleted.mdcPropertyMap[BalletMdc.STEP])
+
+        assertEquals("outer-trace", MDC.get("traceId"))
+        assertEquals("outer-step", MDC.get(BalletMdc.STEP))
+        assertNull(MDC.get(BalletMdc.OPERATION))
+
+        callContextManager.store("chainStopOp", "ch-2", isReplay = false, attempt = 0, operationSuffix = "init")
+        balletMaster.start().step(Steps.STEP_A).map { _, _ -> "cached" }.checkPoint().execute()
+        callContextManager.clear()
+
+        callContextManager.store("chainStopOp", "ch-2", isReplay = true, attempt = 0, operationSuffix = "init")
+        try {
+            val stoppedResult = balletMaster
+                .start()
+                .step(Steps.STEP_A)
+                .map { _, _ -> "unused" }
+                .checkPoint()
+                .step(Steps.STEP_B)
+                .map { _, _ -> throw IllegalStateException("stop-here") }
+                .execute()
+            assertTrue(stoppedResult.isFailure)
+        } finally {
+            callContextManager.clear()
+        }
+
+        val chainStopped = events("chain.stopped", Level.DEBUG).single()
+        assertEquals("chainStopOp", chainStopped.mdcPropertyMap[BalletMdc.OPERATION])
+        assertEquals("ch-2", chainStopped.mdcPropertyMap[BalletMdc.OPERATION_ID])
+        assertEquals("STEP_B", chainStopped.mdcPropertyMap[BalletMdc.STEP])
+        assertEquals("STEP_B", chainStopped.attrs()[BalletMdc.STEP])
+        assertEquals("init", chainStopped.mdcPropertyMap[BalletMdc.SUFFIX])
+        assertEquals("false", chainStopped.mdcPropertyMap[BalletMdc.REPLAY])
+
+        assertEquals("outer-trace", MDC.get("traceId"))
+        assertEquals("outer-step", MDC.get(BalletMdc.STEP))
+        assertNull(MDC.get(BalletMdc.OPERATION))
     }
 }

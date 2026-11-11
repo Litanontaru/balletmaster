@@ -50,9 +50,16 @@ internal object BalletMdc {
 
     private val KEYS = arrayOf(OPERATION, OPERATION_ID, ATTEMPT, SUFFIX, STEP, REPLAY)
 
-    inline fun <T> withStepContext(call: CallContext?, stepId: StepId, suffix: Any, block: () -> T): T {
+    inline fun <T> withChainContext(call: CallContext?, block: () -> T): T =
+        withContext(call, stepId = null, suffix = call?.operationSuffix ?: "", block = block)
+
+    inline fun <T> withStepContext(call: CallContext?, stepId: StepId, suffix: Any, block: () -> T): T =
+        withContext(call, stepId = stepId, suffix = suffix, block = block)
+
+    @PublishedApi
+    internal inline fun <T> withContext(call: CallContext?, stepId: StepId?, suffix: Any, block: () -> T): T {
         val previous = snapshot()
-        applyStepContext(call, stepId, suffix)
+        applyContext(call, stepId, suffix)
         return try {
             block()
         } finally {
@@ -68,7 +75,7 @@ internal object BalletMdc {
     }
 
     @PublishedApi
-    internal fun applyStepContext(call: CallContext?, stepId: StepId, suffix: Any) {
+    internal fun applyContext(call: CallContext?, stepId: StepId?, suffix: Any) {
         try {
             if (call != null) {
                 MDC.put(OPERATION, safeToString(call.operationName))
@@ -83,7 +90,11 @@ internal object BalletMdc {
                 MDC.remove(SUFFIX)
                 MDC.remove(REPLAY)
             }
-            MDC.put(STEP, safeToString(stepId))
+            if (stepId != null) {
+                MDC.put(STEP, safeToString(stepId))
+            } else {
+                MDC.remove(STEP)
+            }
         } catch (_: Exception) {
         }
     }
