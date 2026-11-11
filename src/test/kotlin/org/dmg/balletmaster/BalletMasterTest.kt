@@ -2,9 +2,13 @@ package org.dmg.balletmaster
 
 import org.dmg.balletmaster.context.CallContextManager
 import org.dmg.balletmaster.context.TechStatus
+import org.dmg.balletmaster.state.StateConfig
+import org.dmg.balletmaster.state.StateConfigRepository
 import org.dmg.balletmaster.store.InMemoryStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
@@ -96,6 +100,27 @@ class BalletMasterTest {
         assertNull(store.get<Try<*>>("operation:13:0::STEP_B:output").getOrThrow())
     }
 
+    enum class MyState {
+        DONE,
+        TODO
+    }
+
+    private fun stubRepository(saveResult: Result<Boolean>): StateConfigRepository =
+        object : StateConfigRepository {
+            override fun <S : StepId, STATE : Any> save(config: StateConfig<S, STATE>): Result<Boolean> =
+                saveResult
+
+            override fun <S : StepId, STATE : Any> get(
+                operationName: String,
+                version: String,
+                stepClass: Class<S>,
+                stateClass: Class<STATE>
+            ): Result<StateConfig<S, STATE>?> = Result.success(null)
+
+            override fun getVersions(operationName: String): Result<List<String>> =
+                Result.success(emptyList())
+        }
+
     @Test
     fun executeWithoutCallContextReturnsNoCall() {
         val callContextManager = CallContextManager()
@@ -115,5 +140,61 @@ class BalletMasterTest {
 
         assertTrue(result.isState)
         assertEquals(Try.state<String>(TechStatus.NO_CALL), result)
+    }
+
+    @Test
+    fun defineStatesReturnsConfigWhenRepositorySaveSucceeds() {
+        val balletMaster = BalletMaster(
+            store = InMemoryStore(),
+            callContextManager = CallContextManager(),
+            stateConfigRepository = stubRepository(Result.success(true))
+        )
+
+        val config = balletMaster.defineStates<MyStepId, MyState>("order-flow", "1.0.0") {
+            state(MyState.DONE) { step(MyStepId.STEP_A) }
+            defaultState(MyState.TODO)
+        }
+
+        assertEquals("order-flow", config.operationName)
+        assertEquals("1.0.0", config.version)
+        assertEquals(MyState.TODO, config.defaultState)
+    }
+
+    @Test
+    fun defineStatesThrowsOriginalExceptionWhenRepositorySaveFails() {
+        val storageFailure = RuntimeException("store unavailable")
+        val balletMaster = BalletMaster(
+            store = InMemoryStore(),
+            callContextManager = CallContextManager(),
+            stateConfigRepository = stubRepository(Result.failure(storageFailure))
+        )
+
+        val thrown = assertThrows(RuntimeException::class.java) {
+            balletMaster.defineStates<MyStepId, MyState>("order-flow", "1.0.0") {
+                state(MyState.DONE) { step(MyStepId.STEP_A) }
+                defaultState(MyState.TODO)
+            }
+        }
+
+        assertSame(storageFailure, thrown)
+    }
+
+    @Test
+    fun defineStatesThrowsIllegalStateWhenRepositorySaveReturnsFalse() {
+        val balletMaster = BalletMaster(
+            store = InMemoryStore(),
+            callContextManager = CallContextManager(),
+            stateConfigRepository = stubRepository(Result.success(false))
+        )
+
+        val thrown = assertThrows(IllegalStateException::class.java) {
+            balletMaster.defineStates<MyStepId, MyState>("order-flow", "1.0.0") {
+                state(MyState.DONE) { step(MyStepId.STEP_A) }
+                defaultState(MyState.TODO)
+            }
+        }
+
+        assertTrue(thrown.message?.contains("order-flow") == true)
+        assertTrue(thrown.message?.contains("1.0.0") == true)
     }
 }

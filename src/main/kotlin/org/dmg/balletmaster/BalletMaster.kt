@@ -28,5 +28,10 @@ class BalletMaster(
         operationName: String,
         version: String,
         init: StateConfigBuilder<S, STATE>.() -> Unit
-    ): StateConfig<S, STATE> = processStates(operationName, version, init).also { stateConfigRepository.save(it) }
+    ): StateConfig<S, STATE> =
+        processStates(operationName, version, init).also {
+            check(stateConfigRepository.save(it).getOrThrow()) {
+                "Failed to save StateConfig for operation='$operationName', version='$version'"
+            }
+        }
 }
