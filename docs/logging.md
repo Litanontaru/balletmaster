@@ -8,7 +8,7 @@
 * **Интеграция через SLF4J 2.0:** используется только `org.slf4j:slf4j-api` версии 2.0+ (`LoggerFactory`, `Logger`, `LoggingEventBuilder` / `addKeyValue`, `MDC`) без собственного JSON-форматирования. Приложение-хост само подключает и настраивает совместимый бэкенд (Logback 1.4+/1.5+, Log4j2 через `log4j-slf4j2-impl` и т.д.).
 * **Нулевые потери безопасности (PII-safe):** по умолчанию SDK никогда не записывает в логи содержимое пользовательских `input`/`output`, аргументы бизнес-лямбд или секреты — логируются только метаданные исполнения, идентификаторы корреляции, статусы, длительность и исключения.
 * **Минимальные накладные расходы:** построение атрибутов обёрнуто в `isTraceEnabled` / `isDebugEnabled` / `isInfoEnabled` / `isWarnEnabled` / `isErrorEnabled`, поэтому выключенные уровни не создают лишних аллокаций.
-* **Тишина на нормальном трафике (`INFO`):** штатные операции на каждый шаг пишутся в `DEBUG` и `TRACE`. На `INFO` фиксируются только редкие значимые события смены режима/конфигурации (`replay.switched_to_live`, `state.config_saved`), на `WARN` — аномалии конкурентности и ошибки бизнес-кода шага, на `ERROR` — инфраструктурные ошибки `Store`.
+* **Тишина на нормальном трафике (`INFO`):** штатные операции на каждый шаг пишутся в `DEBUG` и `TRACE`. На `INFO` фиксируются только редкие значимые события смены режима/конфигурации (`replay.switched_to_live`, `state.config_saved`), на `WARN` — аномалии конкурентности, отсутствие контекста и непредвиденные сбои (бизнес-исключения шагов пишутся в `DEBUG` и возвращаются через `Try.failure`), на `ERROR` — инфраструктурные ошибки `Store`.
 
 ---
 
@@ -68,7 +68,7 @@
 | `step.milestone_updated` | `DEBUG` | `milestone` обновил `operationSuffix` (`ballet.suffix`, `newSuffix`) |
 | `step.checkpoint_saved` | `DEBUG` | `checkPoint` сохранил `Success` или `Failure` в `Store` (`outcome`) |
 | `step.checkpoint_bypassed` | `TRACE` | `checkPoint` пропустил запись для `State` или `Error` (`outcome`, `status`) |
-| `step.exception` | `WARN` | Бизнес-исключение внутри `gate`/`map`/`milestone`/`execute` завёрнуто в `StepExecutionException` (`phase`, `exception`, stack trace) |
+| `step.exception` | `DEBUG` / `WARN` | Бизнес-исключение внутри `gate`/`map`/`milestone` (`DEBUG`) или непредвиденный fallback-перехват в `ContextImpl.execute` (`WARN`), завёрнутые в `StepExecutionException` (`phase`, `exception`, stack trace) |
 | `step.no_call` | `WARN` | Шаг вызван без активного `CallContext` в `CallContextManager` (`ballet.step`, `status=NO_CALL`) |
 
 ### 4.2 `org.dmg.balletmaster.lock`
@@ -78,7 +78,7 @@
 | `lock.contention_wait` | `TRACE` | Очередная пауза ожидания занятого лока (`attemptNo`, `elapsedMs`) |
 | `lock.released` | `TRACE` | Лок успешно снят владельцем (`leaseUntil`) |
 | `lock.stolen_expired` | `WARN` | Захвачен истекший лок предыдущего/зависшего воркера (`leaseMs`, `leaseUntil`, `waitMs`, `attempts`) |
-| `lock.blocked` | `WARN` | Лок не получен до истечения `lease` (`status=BLOCKED`, `leaseMs`, `waitMs`, `attempts`, `interrupted`) |
+| `lock.blocked` | `DEBUG` | Лок не получен до истечения `lease` (`status=BLOCKED`, `leaseMs`, `waitMs`, `attempts`, `interrupted`) |
 | `lock.wait_interrupted` | `WARN` | Поток ожидания лока был прерван (`attempts`, `waitMs`, `InterruptedException`) |
 | `lock.stale_unlock_skipped` | `WARN` | Поздний `unlock` протухшего владельца отклонён CAS-проверкой (`expectedLeaseUntil`) |
 

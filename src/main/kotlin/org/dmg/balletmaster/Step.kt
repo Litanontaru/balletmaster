@@ -61,7 +61,7 @@ class Step<T : Any> private constructor(
             Try.error(cause)
         } else {
             val wrapped = if (this is StepExecutionException) this else StepExecutionException(stepId, this)
-            BalletLoggers.step.warnEvent("step.exception", wrapped) {
+            BalletLoggers.step.debugEvent("step.exception", wrapped) {
                 correlation(logCall(), stepId, logSuffix())
                 attr("phase", phase)
                 attr("exception", this@toStepResult.javaClass.simpleName)

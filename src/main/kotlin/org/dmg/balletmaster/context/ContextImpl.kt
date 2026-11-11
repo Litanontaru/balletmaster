@@ -187,7 +187,7 @@ class ContextImpl(
             }
         }
 
-        BalletLoggers.lock.warnEvent("lock.blocked") {
+        BalletLoggers.lock.debugEvent("lock.blocked") {
             correlation(call, stepId, stepSuffix)
             attr("status", BLOCKED)
             attr("leaseMs", lease)

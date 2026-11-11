@@ -184,10 +184,11 @@ internal inline fun Logger.traceEvent(event: String, attrs: LogAttrs.() -> Unit 
     }
 }
 
-internal inline fun Logger.debugEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
+internal inline fun Logger.debugEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
     try {
         if (isDebugEnabled) {
             val builder = atDebug().setMessage(event)
+            if (throwable != null) builder.setCause(throwable)
             LogAttrs(builder).apply(attrs)
             builder.log()
         }

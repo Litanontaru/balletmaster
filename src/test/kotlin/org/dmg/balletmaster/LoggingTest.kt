@@ -298,7 +298,7 @@ class LoggingTest {
     }
 
     @Test
-    fun stepExceptionLogsWarnWithCauseAndStopsChain() {
+    fun stepExceptionLogsDebugWithCauseAndStopsChain() {
         val store = InMemoryStore()
         val callContextManager = CallContextManager()
         val balletMaster = BalletMaster(store, callContextManager)
@@ -314,16 +314,27 @@ class LoggingTest {
                 .map { _, _ -> "never" }
                 .execute()
             assertTrue(res.isFailure)
+
+            val fallbackCtx = ContextImpl(store, { callContextManager.get() }, {}).apply {
+                setStep(Steps.STEP_B)
+            }
+            val fallbackRes = fallbackCtx.execute<String> { throw IllegalStateException("unexpected-execute-boom") }
+            assertTrue(fallbackRes.isFailure)
         } finally {
             callContextManager.clear()
         }
 
-        val exEvents = events("step.exception", Level.WARN)
+        val exEvents = events("step.exception", Level.DEBUG)
         assertEquals(1, exEvents.size)
         assertEquals("map", exEvents[0].attrs()["phase"])
         assertEquals("STEP_A", exEvents[0].attrs()[BalletMdc.STEP])
         assertNotNull(exEvents[0].throwableProxy)
         assertEquals(StepExecutionException::class.java.name, exEvents[0].throwableProxy.className)
+
+        val fallbackEvents = events("step.exception", Level.WARN)
+        assertEquals(1, fallbackEvents.size)
+        assertEquals("execute", fallbackEvents[0].attrs()["phase"])
+        assertEquals("STEP_B", fallbackEvents[0].attrs()[BalletMdc.STEP])
 
         val stopped = events("chain.stopped", Level.DEBUG)
         assertEquals(1, stopped.size)
@@ -424,7 +435,7 @@ class LoggingTest {
         assertEquals(1, events("lock.acquired", Level.TRACE).size)
         assertEquals(1, events("lock.stolen_expired", Level.WARN).size)
         assertEquals(1, events("lock.stale_unlock_skipped", Level.WARN).size)
-        assertEquals(1, events("lock.blocked", Level.WARN).size)
+        assertEquals(1, events("lock.blocked", Level.DEBUG).size)
         assertEquals(1, events("lock.released", Level.TRACE).size)
         assertTrue(events("lock.stolen_expired").all { it.loggerName == BalletLoggers.LOCK })
         assertFalse(events("lock.contention_wait", Level.TRACE).isEmpty())
