@@ -92,12 +92,13 @@ class Step<T : Any> private constructor(
     infix fun <R : Any> map(next: (Context, T) -> R): Step<R> = nextSimple { stepId, input ->
         context.idempotencyGate() and {
             if (it) {
-                fun execute() = try {
-                    Try.success(next(context, input))
-                } catch (e: Exception) {
-                    e.toStepResult(stepId, "map")
-                } finally {
+                fun execute(): Try<R> {
                     context.setPlay()
+                    return try {
+                        Try.success(next(context, input))
+                    } catch (e: Exception) {
+                        e.toStepResult(stepId, "map")
+                    }
                 }
 
                 if (context.isReplay()) {

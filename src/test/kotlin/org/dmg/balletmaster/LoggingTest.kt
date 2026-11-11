@@ -734,4 +734,52 @@ class LoggingTest {
         assertEquals("phase-2", completedB.attrs()[BalletMdc.SUFFIX])
         assertEquals("phase-2", completedB.mdcPropertyMap[BalletMdc.SUFFIX])
     }
+
+    @Test
+    fun replaySwitchUpdatesMdcAndLogsBeforeFirstLiveStepBodyAndException() {
+        val store = InMemoryStore()
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        callContextManager.store("revRepOp", "r-1", isReplay = false, attempt = 0)
+        balletMaster.start().step(Steps.STEP_A).map { _, _ -> "cached-A" }.checkPoint().execute()
+        callContextManager.clear()
+
+        callContextManager.store("revRepOp", "r-1", isReplay = true, attempt = 0)
+        try {
+            val res = balletMaster
+                .start()
+                .step(Steps.STEP_A)
+                .map { _, _ -> "unused" }
+                .checkPoint()
+                .step(Steps.STEP_B)
+                .map { _, _ ->
+                    appLogger.info("first-live-body")
+                    throw IllegalStateException("live-step-failure")
+                }
+                .execute()
+            assertTrue(res.isFailure)
+        } finally {
+            callContextManager.clear()
+        }
+
+        val all = appender.list
+        val cacheHitIdx = all.indexOfFirst { it.message == "replay.cache_hit" }
+        val cacheMissIdx = all.indexOfFirst { it.message == "replay.cache_miss" }
+        val switchedIdx = all.indexOfFirst { it.message == "replay.switched_to_live" }
+        val userBodyIdx = all.indexOfFirst { it.formattedMessage == "first-live-body" }
+        val exIdx = all.indexOfFirst { it.message == "step.exception" && it.attrs()["phase"] == "map" }
+
+        assertTrue(cacheHitIdx in all.indices)
+        assertTrue(cacheMissIdx > cacheHitIdx)
+        assertTrue(switchedIdx > cacheMissIdx)
+        assertTrue(userBodyIdx > switchedIdx)
+        assertTrue(exIdx > userBodyIdx)
+
+        assertEquals("true", all[cacheHitIdx].mdcPropertyMap[BalletMdc.REPLAY])
+        assertEquals("true", all[cacheMissIdx].mdcPropertyMap[BalletMdc.REPLAY])
+        assertEquals("false", all[switchedIdx].mdcPropertyMap[BalletMdc.REPLAY])
+        assertEquals("false", all[userBodyIdx].mdcPropertyMap[BalletMdc.REPLAY])
+        assertEquals("false", all[exIdx].mdcPropertyMap[BalletMdc.REPLAY])
+    }
 }
