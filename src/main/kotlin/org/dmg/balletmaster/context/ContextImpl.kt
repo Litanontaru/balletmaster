@@ -37,14 +37,13 @@ class ContextImpl(
 
     override fun currentSuffix(): Any = stepSuffix
 
-    private fun key(stepId: StepId) = aKey(stepId, call?.attempt, stepSuffix)
+    private fun stepKey(stepId: StepId, attempt: Int? = call?.attempt) =
+        "${call?.operationName}:${call?.operationId}:$attempt:$stepSuffix:$stepId:"
 
-    private fun aKey(stepId: StepId, attempt: Int?, suffix: Any) =
-        "${call?.operationName}:${call?.operationId}:${attempt}:${suffix}:${stepId}:"
+    private val key: String get() = stepKey(stepId)
 
-    private val key: String get() = key(stepId)
-
-    private val originalKey: String get() = aKey(stepId, call?.attempt?.takeIf { it > 0 }?.let { it - 1 }, stepSuffix)
+    private val previousAttemptKey: String
+        get() = stepKey(stepId, call?.attempt?.takeIf { it > 0 }?.dec())
 
     private fun <T> Result<T>.logStoreFailure(
         storeOp: String,
@@ -52,15 +51,15 @@ class ContextImpl(
         targetStepId: StepId = stepId
     ): Result<T> = logStoreError(call, targetStepId, stepSuffix, storeOp, targetKey)
 
-    override fun isDone(stepId: StepId): Boolean {
-        val targetKey = key(stepId) + "output"
-        return store.get<Try<*>>(targetKey)
-            .logStoreFailure("is_done", targetKey, stepId)
-            .fold(
-                onSuccess = { it?.isSuccess == true },
-                onFailure = { throw StoreAccessException(it) }
-            )
-    }
+    override fun isDone(stepId: StepId): Boolean =
+        (stepKey(stepId) + "output").let { targetKey ->
+            store.get<Try<*>>(targetKey)
+                .logStoreFailure("is_done", targetKey, stepId)
+                .fold(
+                    onSuccess = { it?.isSuccess == true },
+                    onFailure = { throw StoreAccessException(it) }
+                )
+        }
 
     override fun setStep(stepId: StepId) {
         this.stepId = stepId
@@ -77,25 +76,17 @@ class ContextImpl(
         onSetSuffix(suffix)
     }
 
-    override fun setInput(value: Any): Result<Boolean> {
-        val targetKey = key + "input"
-        return store.set(targetKey, value).logStoreFailure("set_input", targetKey)
-    }
+    override fun setInput(value: Any): Result<Boolean> =
+        (key + "input").let { store.set(it, value).logStoreFailure("set_input", it) }
 
-    override fun idempotencyGate(): Result<Boolean> {
-        val targetKey = key + "output"
-        return store.set(targetKey, null to null).logStoreFailure("idempotency_gate", targetKey)
-    }
+    override fun idempotencyGate(): Result<Boolean> =
+        (key + "output").let { store.set(it, null to null).logStoreFailure("idempotency_gate", it) }
 
-    override fun setOutput(value: Try<Any>): Result<Boolean> {
-        val targetKey = key + "output"
-        return store.set(targetKey, value).logStoreFailure("set_output", targetKey)
-    }
+    override fun setOutput(value: Try<Any>): Result<Boolean> =
+        (key + "output").let { store.set(it, value).logStoreFailure("set_output", it) }
 
-    override fun <R : Any> originalOutput(): Result<Try<R>?> {
-        val targetKey = originalKey + "output"
-        return store.get<Try<R>>(targetKey).logStoreFailure("original_output", targetKey)
-    }
+    override fun <R : Any> originalOutput(): Result<Try<R>?> =
+        (previousAttemptKey + "output").let { store.get<Try<R>>(it).logStoreFailure("original_output", it) }
 
     override fun isReplay() = call?.isReplay ?: false
 
@@ -137,59 +128,67 @@ class ContextImpl(
     private fun tryAcquireOnce(lockKey: String, startNanos: Long?, attempts: Int): Result<Long>? {
         val now = currentTimeMillis()
         val leaseUntil = now + lease
-
-        val freshAcquire = store.set(lockKey, null to leaseUntil).logStoreFailure("lock_acquire", lockKey)
-        if (freshAcquire.isFailure) return freshAcquire.map { 0L }
-        if (freshAcquire.getOrDefault(false)) {
+        return tryLockStep(lockKey, null, leaseUntil, "lock_acquire") {
             LockLog.acquired(call, stepId, stepSuffix, lease, leaseUntil, startNanos, attempts)
-            return Result.success(leaseUntil)
-        }
-
-        val stealExpired = store.set(lockKey, lessThen(now) to leaseUntil).logStoreFailure("lock_steal", lockKey)
-        if (stealExpired.isFailure) return stealExpired.map { 0L }
-        if (stealExpired.getOrDefault(false)) {
+        } ?: tryLockStep(lockKey, lessThen(now), leaseUntil, "lock_steal") {
             LockLog.stolenExpired(call, stepId, stepSuffix, lease, leaseUntil, startNanos, attempts)
-            return Result.success(leaseUntil)
         }
-
-        return null
     }
 
-    private fun unlock(expected: Long): Result<Boolean> {
-        val lockKey = key + "timeout"
-        return store.set(lockKey, expected to null)
-            .logStoreFailure("lock_unlock", lockKey)
-            .onSuccess { released -> LockLog.unlockOutcome(call, stepId, stepSuffix, expected, released) }
-    }
+    private inline fun tryLockStep(
+        lockKey: String,
+        expected: Any?,
+        leaseUntil: Long,
+        storeOp: String,
+        onAcquired: () -> Unit
+    ): Result<Long>? =
+        store.set(lockKey, expected to leaseUntil)
+            .logStoreFailure(storeOp, lockKey)
+            .fold(
+                onSuccess = {
+                    if (it) {
+                        onAcquired()
+                        Result.success(leaseUntil)
+                    } else {
+                        null
+                    }
+                },
+                onFailure = Result.Companion::failure
+            )
+
+    private fun unlock(expected: Long): Result<Boolean> =
+        (key + "timeout").let { lockKey ->
+            store.set(lockKey, expected to null)
+                .logStoreFailure("lock_unlock", lockKey)
+                .onSuccess { released -> LockLog.unlockOutcome(call, stepId, stepSuffix, expected, released) }
+        }
 
     override fun <R : Any> execute(action: () -> Try<R>): Try<R> =
         BalletMdc.withStepContext(call, stepId, stepSuffix) {
-            if (call == null) {
-                StepLog.noCall(stepId)
-                return@withStepContext Try.state(NO_CALL)
-            }
-            tryLock() and { acquired ->
+            if (call == null) Try.state<R>(NO_CALL).also { StepLog.noCall(stepId) }
+            else tryLock() and { acquired ->
                 if (acquired > 0L) executeWithLease(acquired, action) else Try.state(BLOCKED)
             }
         }
 
     private fun <R : Any> executeWithLease(acquired: Long, action: () -> Try<R>): Try<R> {
         val startNanos = StepLog.startTimer()
-        var res: Try<R>
         var unlockResult: Result<Boolean>
-        try {
+        val stepResult = try {
             StepLog.stepStarted(call, stepId, stepSuffix, lease, isReplay())
-            res = runProtectedAction(action)
+            runProtectedAction(action)
         } finally {
-            unlockResult = try {
-                unlock(acquired)
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
+            unlockResult = safeUnlock(acquired)
         }
-        val finalRes = if (res.isError) res else unlockResult and res
-        StepLog.stepCompleted(call, stepId, stepSuffix, finalRes, startNanos)
-        return finalRes
+        return (if (stepResult.isError) stepResult else unlockResult and stepResult).also {
+            StepLog.stepCompleted(call, stepId, stepSuffix, it, startNanos)
+        }
+    }
+
+    private fun safeUnlock(acquired: Long): Result<Boolean> = try {
+        unlock(acquired)
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     private fun <R : Any> runProtectedAction(action: () -> Try<R>): Try<R> = try {
