@@ -2,12 +2,8 @@ package org.dmg.balletmaster.state
 
 import org.dmg.balletmaster.StepId
 import org.dmg.balletmaster.Try
-import org.dmg.balletmaster.logging.BalletLoggers
-import org.dmg.balletmaster.logging.BalletMdc
-import org.dmg.balletmaster.logging.debugEvent
-import org.dmg.balletmaster.logging.errorEvent
-import org.dmg.balletmaster.logging.safeStateLabel
-import org.dmg.balletmaster.logging.warnEvent
+import org.dmg.balletmaster.logging.StateLog
+import org.dmg.balletmaster.logging.logStoreError
 import org.dmg.balletmaster.store.Store
 import org.dmg.balletmaster.util.plus
 
@@ -42,50 +38,45 @@ class ProcessSupervisor(
         stateClass: Class<STATE>,
         attempt: Int = 0,
         suffix: Any = ""
-    ): Result<STATE> {
-        return repository.getLatest(operationName, versionPrefix, stepClass, stateClass) + { config ->
+    ): Result<STATE> =
+        repository.getLatest(operationName, versionPrefix, stepClass, stateClass) + { config ->
             if (config == null) {
-                BalletLoggers.state.warnEvent("state.config_not_found") {
-                    attr(BalletMdc.OPERATION, operationName)
-                    attr("versionPrefix", versionPrefix)
-                }
+                StateLog.configNotFound(operationName, versionPrefix)
                 Result.failure(NoSuchElementException("StateConfig not found for operation='$operationName' with versionPrefix='$versionPrefix'"))
             } else {
-                try {
-                    val state = config.evaluate { stepId ->
-                        val key = "${operationName}:${operationId}:${attempt}:${suffix}:${stepId}:output"
-                        store.get<Try<*>>(key)
-                            .onFailure { ex ->
-                                BalletLoggers.store.errorEvent("store.error", ex) {
-                                    attr(BalletMdc.OPERATION, operationName)
-                                    attr(BalletMdc.OPERATION_ID, operationId)
-                                    attr(BalletMdc.ATTEMPT, attempt)
-                                    attr(BalletMdc.SUFFIX, suffix)
-                                    attr(BalletMdc.STEP, stepId)
-                                    attr("storeOp", "supervisor_step_check")
-                                    attr("key", key)
-                                }
-                            }
-                            .fold(
-                                onSuccess = { it?.isSuccess == true },
-                                onFailure = { throw SupervisorStoreReadException(it) }
-                            )
-                    }
-                    BalletLoggers.state.debugEvent("state.resolved") {
-                        attr(BalletMdc.OPERATION, operationName)
-                        attr(BalletMdc.OPERATION_ID, operationId)
-                        attr(BalletMdc.ATTEMPT, attempt)
-                        attr(BalletMdc.SUFFIX, suffix)
-                        attr("version", config.version)
-                        attr("versionPrefix", versionPrefix)
-                        attr("state", safeStateLabel(state))
-                    }
-                    Result.success(state)
-                } catch (e: SupervisorStoreReadException) {
-                    Result.failure(e.cause)
-                }
+                resolveWithConfig(operationName, operationId, versionPrefix, attempt, suffix, config)
             }
         }
+
+    private fun <S : StepId, STATE : Any> resolveWithConfig(
+        operationName: String,
+        operationId: String,
+        versionPrefix: String,
+        attempt: Int,
+        suffix: Any,
+        config: StateConfig<S, STATE>
+    ): Result<STATE> = try {
+        val state = config.evaluate { stepId ->
+            isStepCompleted(operationName, operationId, attempt, suffix, stepId)
+        }
+        StateLog.resolved(operationName, operationId, attempt, suffix, config.version, versionPrefix, state)
+        Result.success(state)
+    } catch (e: SupervisorStoreReadException) {
+        Result.failure(e.cause)
+    }
+
+    private fun isStepCompleted(
+        operationName: String,
+        operationId: String,
+        attempt: Int,
+        suffix: Any,
+        stepId: StepId
+    ): Boolean {
+        val key = "$operationName:$operationId:$attempt:$suffix:$stepId:output"
+        return store.get<Try<*>>(key)
+            .logStoreError(operationName, operationId, attempt, suffix, stepId, "supervisor_step_check", key)
+            .getOrElse { throw SupervisorStoreReadException(it) }
+            ?.isSuccess == true
     }
 }
 

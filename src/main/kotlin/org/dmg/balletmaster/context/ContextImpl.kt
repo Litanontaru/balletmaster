@@ -5,20 +5,11 @@ import org.dmg.balletmaster.StepId
 import org.dmg.balletmaster.Try
 import org.dmg.balletmaster.context.TechStatus.BLOCKED
 import org.dmg.balletmaster.context.TechStatus.NO_CALL
-import org.dmg.balletmaster.logging.BalletLoggers
 import org.dmg.balletmaster.logging.BalletMdc
+import org.dmg.balletmaster.logging.LockLog
 import org.dmg.balletmaster.logging.LoggingContext
-import org.dmg.balletmaster.logging.debugEvent
-import org.dmg.balletmaster.logging.elapsedMillis
-import org.dmg.balletmaster.logging.errorEvent
-import org.dmg.balletmaster.logging.infoEvent
-import org.dmg.balletmaster.logging.outcomeLabel
-import org.dmg.balletmaster.logging.safeExceptionName
-import org.dmg.balletmaster.logging.startDebugTimer
-import org.dmg.balletmaster.logging.startWarnTimer
-import org.dmg.balletmaster.logging.stateStatusOrNull
-import org.dmg.balletmaster.logging.traceEvent
-import org.dmg.balletmaster.logging.warnEvent
+import org.dmg.balletmaster.logging.StepLog
+import org.dmg.balletmaster.logging.logStoreError
 import org.dmg.balletmaster.store.Store
 import org.dmg.balletmaster.store.lessThen
 import org.dmg.balletmaster.util.and
@@ -59,13 +50,7 @@ class ContextImpl(
         storeOp: String,
         targetKey: String,
         targetStepId: StepId = stepId
-    ): Result<T> = onFailure { ex ->
-        BalletLoggers.store.errorEvent("store.error", ex) {
-            correlation(call, targetStepId, stepSuffix)
-            attr("storeOp", storeOp)
-            attr("key", targetKey)
-        }
-    }
+    ): Result<T> = logStoreError(call, targetStepId, stepSuffix, storeOp, targetKey)
 
     override fun isDone(stepId: StepId): Boolean {
         val targetKey = key(stepId) + "output"
@@ -117,159 +102,103 @@ class ContextImpl(
     override fun setPlay() {
         val wasReplay = isReplay()
         off()
-        val nowReplay = isReplay()
-        if (wasReplay && !nowReplay) {
+        if (wasReplay && !isReplay()) {
             BalletMdc.updateReplay(false)
-            BalletLoggers.replay.infoEvent("replay.switched_to_live") {
-                correlation(call, stepId, stepSuffix)
-            }
+            StepLog.replaySwitchedToLive(call, stepId, stepSuffix)
         }
     }
 
     private fun tryLock(): Result<Long> {
         val lockKey = key + "timeout"
-        val startNanos = BalletLoggers.lock.startWarnTimer()
+        val startNanos = LockLog.startTimer()
         val deadline = currentTimeMillis() + lease
         var attempts = 0
         var interrupted = false
 
         while (currentTimeMillis() <= deadline) {
             attempts++
-            val now = currentTimeMillis()
-            val leaseUntil = now + lease
-
-            val freshAcquire = store.set(lockKey, null to leaseUntil).logStoreFailure("lock_acquire", lockKey)
-            if (freshAcquire.isFailure) {
-                return freshAcquire.map { 0L }
-            }
-            if (freshAcquire.getOrDefault(false)) {
-                BalletLoggers.lock.traceEvent("lock.acquired") {
-                    correlation(call, stepId, stepSuffix)
-                    attr("leaseMs", lease)
-                    attr("leaseUntil", leaseUntil)
-                    attr("waitMs", elapsedMillis(startNanos))
-                    attr("attempts", attempts)
-                }
-                return Result.success(leaseUntil)
-            }
-
-            val stealExpired = store.set(lockKey, lessThen(now) to leaseUntil).logStoreFailure("lock_steal", lockKey)
-            if (stealExpired.isFailure) {
-                return stealExpired.map { 0L }
-            }
-            if (stealExpired.getOrDefault(false)) {
-                BalletLoggers.lock.warnEvent("lock.stolen_expired") {
-                    correlation(call, stepId, stepSuffix)
-                    attr("leaseMs", lease)
-                    attr("leaseUntil", leaseUntil)
-                    attr("waitMs", elapsedMillis(startNanos))
-                    attr("attempts", attempts)
-                }
-                return Result.success(leaseUntil)
-            }
-
-            BalletLoggers.lock.traceEvent("lock.contention_wait") {
-                correlation(call, stepId, stepSuffix)
-                attr("attemptNo", attempts)
-                attr("elapsedMs", elapsedMillis(startNanos))
-            }
+            tryAcquireOnce(lockKey, startNanos, attempts)?.let { return it }
+            LockLog.contentionWait(call, stepId, stepSuffix, attempts, startNanos)
 
             try {
                 Thread.sleep(10)
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
                 interrupted = true
-                BalletLoggers.lock.warnEvent("lock.wait_interrupted", e) {
-                    correlation(call, stepId, stepSuffix)
-                    attr("attempts", attempts)
-                    attr("waitMs", elapsedMillis(startNanos))
-                }
+                LockLog.waitInterrupted(call, stepId, stepSuffix, e, attempts, startNanos)
                 break
             }
         }
 
-        BalletLoggers.lock.debugEvent("lock.blocked") {
-            correlation(call, stepId, stepSuffix)
-            attr("status", BLOCKED)
-            attr("leaseMs", lease)
-            attr("waitMs", elapsedMillis(startNanos))
-            attr("attempts", attempts)
-            attr("interrupted", interrupted)
-        }
+        LockLog.blocked(call, stepId, stepSuffix, lease, startNanos, attempts, interrupted)
         return Result.success(0L)
+    }
+
+    private fun tryAcquireOnce(lockKey: String, startNanos: Long?, attempts: Int): Result<Long>? {
+        val now = currentTimeMillis()
+        val leaseUntil = now + lease
+
+        val freshAcquire = store.set(lockKey, null to leaseUntil).logStoreFailure("lock_acquire", lockKey)
+        if (freshAcquire.isFailure) return freshAcquire.map { 0L }
+        if (freshAcquire.getOrDefault(false)) {
+            LockLog.acquired(call, stepId, stepSuffix, lease, leaseUntil, startNanos, attempts)
+            return Result.success(leaseUntil)
+        }
+
+        val stealExpired = store.set(lockKey, lessThen(now) to leaseUntil).logStoreFailure("lock_steal", lockKey)
+        if (stealExpired.isFailure) return stealExpired.map { 0L }
+        if (stealExpired.getOrDefault(false)) {
+            LockLog.stolenExpired(call, stepId, stepSuffix, lease, leaseUntil, startNanos, attempts)
+            return Result.success(leaseUntil)
+        }
+
+        return null
     }
 
     private fun unlock(expected: Long): Result<Boolean> {
         val lockKey = key + "timeout"
         return store.set(lockKey, expected to null)
             .logStoreFailure("lock_unlock", lockKey)
-            .onSuccess { released ->
-                if (released) {
-                    BalletLoggers.lock.traceEvent("lock.released") {
-                        correlation(call, stepId, stepSuffix)
-                        attr("leaseUntil", expected)
-                    }
-                } else {
-                    BalletLoggers.lock.warnEvent("lock.stale_unlock_skipped") {
-                        correlation(call, stepId, stepSuffix)
-                        attr("expectedLeaseUntil", expected)
-                    }
-                }
-            }
+            .onSuccess { released -> LockLog.unlockOutcome(call, stepId, stepSuffix, expected, released) }
     }
 
     override fun <R : Any> execute(action: () -> Try<R>): Try<R> =
         BalletMdc.withStepContext(call, stepId, stepSuffix) {
             if (call == null) {
-                BalletLoggers.step.warnEvent("step.no_call") {
-                    attr(BalletMdc.STEP, stepId)
-                    attr("status", NO_CALL)
-                }
-                Try.state(NO_CALL)
-            } else {
-                tryLock() and { acquired ->
-                    if (acquired > 0L) {
-                        val startNanos = BalletLoggers.step.startDebugTimer()
-                        var res: Try<R>
-                        var unlockResult: Result<Boolean>
-                        try {
-                            BalletLoggers.step.debugEvent("step.started") {
-                                correlation(call, stepId, stepSuffix)
-                                attr("leaseMs", lease)
-                                attr(BalletMdc.REPLAY, isReplay())
-                            }
-                            res = try {
-                                action()
-                            } catch (e: StoreAccessException) {
-                                Try.error(e.cause)
-                            } catch (e: Exception) {
-                                val wrapped = if (e is StepExecutionException) e else StepExecutionException(stepId, e)
-                                BalletLoggers.step.warnEvent("step.exception") {
-                                    correlation(call, stepId, stepSuffix)
-                                    attr("phase", "execute")
-                                    attr("exception", safeExceptionName(e))
-                                }
-                                Try.failure(wrapped)
-                            }
-                        } finally {
-                            unlockResult = try {
-                                unlock(acquired)
-                            } catch (e: Exception) {
-                                Result.failure(e)
-                            }
-                        }
-                        val finalRes = if (res.isError) res else unlockResult and res
-                        BalletLoggers.step.debugEvent("step.completed") {
-                            correlation(call, stepId, stepSuffix)
-                            attr("outcome", finalRes.outcomeLabel())
-                            attr("status", finalRes.stateStatusOrNull())
-                            attr("durationMs", elapsedMillis(startNanos))
-                        }
-                        finalRes
-                    } else {
-                        Try.state(BLOCKED)
-                    }
-                }
+                StepLog.noCall(stepId)
+                return@withStepContext Try.state(NO_CALL)
+            }
+            tryLock() and { acquired ->
+                if (acquired > 0L) executeWithLease(acquired, action) else Try.state(BLOCKED)
             }
         }
+
+    private fun <R : Any> executeWithLease(acquired: Long, action: () -> Try<R>): Try<R> {
+        val startNanos = StepLog.startTimer()
+        var res: Try<R>
+        var unlockResult: Result<Boolean>
+        try {
+            StepLog.stepStarted(call, stepId, stepSuffix, lease, isReplay())
+            res = runProtectedAction(action)
+        } finally {
+            unlockResult = try {
+                unlock(acquired)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+        val finalRes = if (res.isError) res else unlockResult and res
+        StepLog.stepCompleted(call, stepId, stepSuffix, finalRes, startNanos)
+        return finalRes
+    }
+
+    private fun <R : Any> runProtectedAction(action: () -> Try<R>): Try<R> = try {
+        action()
+    } catch (e: StoreAccessException) {
+        Try.error(e.cause)
+    } catch (e: Exception) {
+        val wrapped = e as? StepExecutionException ?: StepExecutionException(stepId, e)
+        StepLog.unexpectedException(call, stepId, stepSuffix, "execute", e)
+        Try.failure(wrapped)
+    }
 }
