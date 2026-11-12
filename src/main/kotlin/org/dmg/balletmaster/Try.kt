@@ -66,18 +66,13 @@ class Try<out T>(private val value: Any?) : Serializable {
     }
 }
 
-infix fun <T> Try<T>.also(action: (T) -> Unit): Try<T> =
-    fold(Try.Companion::failure, Try.Companion::error, Try.Companion::state) {
-        action(it)
-        Try.success(it)
-    }
+infix fun <T> Try<T>.also(action: (T) -> Unit): Try<T> = then {
+    action(it)
+    Try.success(it)
+}
 
-infix fun <T, R> Try<T>.map(value: (T) -> Try<R>) =
-    fold(Try.Companion::failure, Try.Companion::error, Try.Companion::state) {
-        value(it)
-    }
+infix fun <T, R> Try<T>.map(value: (T) -> Try<R>): Try<R> = then(value)
 
-infix fun <T, R> Try<T>.and(value: (T) -> Result<R>): Try<R> =
-    fold(Try.Companion::failure, Try.Companion::error, Try.Companion::state) {
-        value(it).fold(Try.Companion::success, Try.Companion::error)
-    }
+infix fun <T, R> Try<T>.and(value: (T) -> Result<R>): Try<R> = then {
+    value(it).fold(Try.Companion::success, Try.Companion::error)
+}

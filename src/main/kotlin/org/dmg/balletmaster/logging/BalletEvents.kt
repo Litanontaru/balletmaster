@@ -47,11 +47,7 @@ internal fun <T> Result<T>.logStoreError(
     storeOp: String,
     targetKey: String
 ): Result<T> = logStoreFailure(storeOp, targetKey) {
-    attr(BalletMdc.OPERATION, operationName)
-    attr(BalletMdc.OPERATION_ID, operationId)
-    attr(BalletMdc.ATTEMPT, attempt)
-    attr(BalletMdc.SUFFIX, suffix)
-    attr(BalletMdc.STEP, stepId)
+    correlation(operationName, operationId, attempt, suffix, stepId)
 }
 
 internal object StateLog {
@@ -80,10 +76,7 @@ internal object StateLog {
         state: Any
     ) {
         BalletLoggers.state.debugEvent("state.resolved") {
-            attr(BalletMdc.OPERATION, operationName)
-            attr(BalletMdc.OPERATION_ID, operationId)
-            attr(BalletMdc.ATTEMPT, attempt)
-            attr(BalletMdc.SUFFIX, suffix)
+            correlation(operationName, operationId, attempt, suffix)
             attr("version", version)
             attr("versionPrefix", versionPrefix)
             attr("state", safeStateLabel(state))
@@ -251,14 +244,14 @@ internal object StepLog {
 
     fun replayCacheHit(context: InternalContext, stepId: StepId, original: Try<*>) {
         BalletLoggers.replay.debugEvent("replay.cache_hit") {
-            correlation(currentCall(context), stepId, context.currentSuffixOrDefault())
+            correlation(context, stepId)
             attr("outcome", original.outcomeLabel())
         }
     }
 
     fun replayCacheMiss(context: InternalContext, stepId: StepId) {
         BalletLoggers.replay.debugEvent("replay.cache_miss") {
-            correlation(currentCall(context), stepId, context.currentSuffixOrDefault())
+            correlation(context, stepId)
         }
     }
 
@@ -279,7 +272,7 @@ internal object StepLog {
 
     fun checkpointBypassed(context: InternalContext, stepId: StepId, output: Try<*>) {
         BalletLoggers.step.traceEvent("step.checkpoint_bypassed") {
-            correlation(currentCall(context), stepId, context.currentSuffixOrDefault())
+            correlation(context, stepId)
             attr("outcome", output.outcomeLabel())
             attr("status", output.stateStatusOrNull())
         }
@@ -342,10 +335,13 @@ internal object StepLog {
 
     private fun logSkipped(context: InternalContext, stepId: StepId, event: String) {
         BalletLoggers.step.debugEvent(event) {
-            correlation(currentCall(context), stepId, context.currentSuffixOrDefault())
+            correlation(context, stepId)
             attr("status", SKIP)
         }
     }
+
+    private fun LogAttrs.correlation(context: InternalContext, stepId: StepId) =
+        correlation(currentCall(context), stepId, context.currentSuffixOrDefault())
 
     private fun LogAttrs.stepExceptionAttrs(
         call: CallContext?,

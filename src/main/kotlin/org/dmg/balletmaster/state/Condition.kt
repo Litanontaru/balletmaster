@@ -14,20 +14,23 @@ data class StepDone<S : StepId>(val step: S) : Condition<S> {
 
 data class AllOf<S : StepId>(val conditions: List<Condition<S>>) : Condition<S> {
     override fun evaluate(isDone: (S) -> Boolean): Boolean = conditions.all { it.evaluate(isDone) }
-    override val referencedSteps: Set<S> get() = conditions.flatMap { it.referencedSteps }.toSet()
+    override val referencedSteps: Set<S> get() = conditions.referencedSteps()
 }
 
 data class AnyOf<S : StepId>(val conditions: List<Condition<S>>) : Condition<S> {
     override fun evaluate(isDone: (S) -> Boolean): Boolean = conditions.any { it.evaluate(isDone) }
-    override val referencedSteps: Set<S> get() = conditions.flatMap { it.referencedSteps }.toSet()
+    override val referencedSteps: Set<S> get() = conditions.referencedSteps()
 }
 
 data class NoneOf<S : StepId>(val conditions: List<Condition<S>>) : Condition<S> {
     override fun evaluate(isDone: (S) -> Boolean): Boolean = conditions.none { it.evaluate(isDone) }
-    override val referencedSteps: Set<S> get() = conditions.flatMap { it.referencedSteps }.toSet()
+    override val referencedSteps: Set<S> get() = conditions.referencedSteps()
 }
 
 data class IsEmpty<S : StepId>(val expectedSteps: Set<S> = emptySet()) : Condition<S> {
-    override fun evaluate(isDone: (S) -> Boolean): Boolean = expectedSteps.none { isDone(it) }
+    override fun evaluate(isDone: (S) -> Boolean): Boolean = expectedSteps.none(isDone)
     override val referencedSteps: Set<S> get() = expectedSteps
 }
+
+private fun <S : StepId> List<Condition<S>>.referencedSteps(): Set<S> =
+    flatMapTo(mutableSetOf()) { it.referencedSteps }

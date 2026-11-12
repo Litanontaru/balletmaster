@@ -79,20 +79,16 @@ internal object BalletMdc {
 
     @PublishedApi
     internal fun applyContext(call: CallContext?, stepId: StepId?, suffix: Any): Boolean {
-        var allApplied = true
-        if (call != null) {
-            if (!setMdcValue(OPERATION, safeToString(call.operationName))) allApplied = false
-            if (!setMdcValue(OPERATION_ID, safeToString(call.operationId))) allApplied = false
-            if (!setMdcValue(ATTEMPT, call.attempt.toString())) allApplied = false
-            if (!setMdcValue(SUFFIX, safeToString(suffix))) allApplied = false
-            if (!setMdcValue(REPLAY, call.isReplay.toString())) allApplied = false
+        val opApplied = if (call != null) {
+            setMdcValue(OPERATION, safeToString(call.operationName)) and
+                setMdcValue(OPERATION_ID, safeToString(call.operationId)) and
+                setMdcValue(ATTEMPT, call.attempt.toString()) and
+                setMdcValue(SUFFIX, safeToString(suffix)) and
+                setMdcValue(REPLAY, call.isReplay.toString())
         } else {
-            for (key in OPERATION_KEYS) {
-                if (!setMdcValue(key, null)) allApplied = false
-            }
+            OPERATION_KEYS.fold(true) { acc, key -> acc and setMdcValue(key, null) }
         }
-        if (!setMdcValue(STEP, stepId?.let(::safeToString))) allApplied = false
-        return allApplied
+        return opApplied and setMdcValue(STEP, stepId?.let(::safeToString))
     }
 
     @PublishedApi
@@ -140,15 +136,22 @@ internal class LogAttrs(
     private val builder: LoggingEventBuilder
 ) {
     fun correlation(call: CallContext?, stepId: StepId? = null, suffix: Any? = null) {
-        if (call != null) {
-            attr(BalletMdc.OPERATION, call.operationName)
-            attr(BalletMdc.OPERATION_ID, call.operationId)
-            attr(BalletMdc.ATTEMPT, call.attempt)
-            attr(BalletMdc.SUFFIX, suffix ?: call.operationSuffix)
-        }
-        if (stepId != null) {
-            attr(BalletMdc.STEP, stepId)
-        }
+        call?.let { correlation(it.operationName, it.operationId, it.attempt, suffix ?: it.operationSuffix, stepId) }
+            ?: stepId?.let { attr(BalletMdc.STEP, it) }
+    }
+
+    fun correlation(
+        operationName: Any,
+        operationId: Any,
+        attempt: Int,
+        suffix: Any,
+        stepId: StepId? = null
+    ) {
+        attr(BalletMdc.OPERATION, operationName)
+        attr(BalletMdc.OPERATION_ID, operationId)
+        attr(BalletMdc.ATTEMPT, attempt)
+        attr(BalletMdc.SUFFIX, suffix)
+        stepId?.let { attr(BalletMdc.STEP, it) }
     }
 
     fun attr(key: String, value: Any?) {
@@ -163,21 +166,20 @@ private fun normalizeAttrValue(value: Any): Any = when (value) {
 }
 
 private fun sanitizeControlChars(raw: String): String {
-    if (raw.none { it.isISOControl() || it == '\u2028' || it == '\u2029' }) {
-        return raw
-    }
+    if (raw.none(::needsEscape)) return raw
     return buildString(raw.length + 8) {
         for (ch in raw) {
-            when {
-                ch == '\n' -> append("\\n")
-                ch == '\r' -> append("\\r")
-                ch == '\t' -> append("\\t")
-                ch.isISOControl() || ch == '\u2028' || ch == '\u2029' -> appendUnicodeEscape(this, ch)
-                else -> append(ch)
+            when (ch) {
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (needsEscape(ch)) appendUnicodeEscape(this, ch) else append(ch)
             }
         }
     }
 }
+
+private fun needsEscape(ch: Char): Boolean = ch.isISOControl() || ch == '\u2028' || ch == '\u2029'
 
 private fun appendUnicodeEscape(builder: StringBuilder, ch: Char) {
     builder.append("\\u").append(ch.code.toString(16).padStart(4, '0'))
