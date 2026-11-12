@@ -7,6 +7,7 @@ import org.dmg.balletmaster.store.InMemoryStore
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
@@ -19,38 +20,21 @@ class ContextImplTest {
         STEP_A
     }
 
+    private fun createContext(store: InMemoryStore, call: CallContext, leaseMs: Long) =
+        ContextImpl(store = store, callProvider = { call }, off = {}).apply {
+            setStep(Steps.STEP_A)
+            setLease(leaseMs)
+        }
+
     @Test
     fun staleOwnerDoesNotUnlockLockAcquiredByNewOwner() {
         val store = InMemoryStore()
         val call = CallContext("lockOp", "1", isReplay = false, attempt = 0)
         val lockKey = "lockOp:1:0::STEP_A:timeout"
 
-        val staleContext = ContextImpl(
-            store = store,
-            callProvider = { call },
-            off = {}
-        ).apply {
-            setStep(Steps.STEP_A)
-            setLease(50L)
-        }
-
-        val newContext = ContextImpl(
-            store = store,
-            callProvider = { call },
-            off = {}
-        ).apply {
-            setStep(Steps.STEP_A)
-            setLease(1000L)
-        }
-
-        val probingContext = ContextImpl(
-            store = store,
-            callProvider = { call },
-            off = {}
-        ).apply {
-            setStep(Steps.STEP_A)
-            setLease(20L)
-        }
+        val staleContext = createContext(store, call, 50L)
+        val newContext = createContext(store, call, 1000L)
+        val probingContext = createContext(store, call, 20L)
 
         val staleEntered = CountDownLatch(1)
         val releaseStale = CountDownLatch(1)
@@ -115,12 +99,9 @@ class ContextImplTest {
         val call = CallContext("errOp", "1", isReplay = false, attempt = 0)
         val lockKey = "errOp:1:0::STEP_A:timeout"
 
-        val context = ContextImpl(store, { call }, {}).apply {
-            setStep(Steps.STEP_A)
-            setLease(5_000L)
-        }
+        val context = createContext(store, call, 5_000L)
 
-        val thrown = org.junit.jupiter.api.Assertions.assertThrows(AssertionError::class.java) {
+        val thrown = assertThrows(AssertionError::class.java) {
             context.execute<String> {
                 throw AssertionError("fatal step error")
             }
@@ -128,10 +109,7 @@ class ContextImplTest {
         assertEquals("fatal step error", thrown.message)
         assertNull(store.get<Long>(lockKey).getOrThrow())
 
-        val nextContext = ContextImpl(store, { call }, {}).apply {
-            setStep(Steps.STEP_A)
-            setLease(5_000L)
-        }
+        val nextContext = createContext(store, call, 5_000L)
         assertEquals(Try.success("ok"), nextContext.execute { Try.success("ok") })
     }
 }

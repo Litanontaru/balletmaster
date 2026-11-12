@@ -246,16 +246,15 @@ class StateConfigTest {
             defaultState(PaymentDomainState.UNKNOWN)
         }
 
-        // Simulate shared execution facts in Context:
-        // ORDER_CREATED and HOLD_FUNDS are done
-        val mockContext = object : Context {
-            override fun isDone(stepId: StepId): Boolean = when (stepId) {
-                OrderDomainSteps.ORDER_CREATED -> true
-                PaymentDomainSteps.HOLD_FUNDS -> true
-                else -> false
-            }
+        fun contextWithDone(vararg done: StepId): Context = object : Context {
+            private val doneSet = done.toSet()
+            override fun isDone(stepId: StepId): Boolean = stepId in doneSet
             override val operationSuffix: Any = ""
         }
+
+        // Simulate shared execution facts in Context:
+        // ORDER_CREATED and HOLD_FUNDS are done
+        val mockContext = contextWithDone(OrderDomainSteps.ORDER_CREATED, PaymentDomainSteps.HOLD_FUNDS)
 
         // Order supervisor evaluates using its lens:
         val orderState = orderConfig.evaluate(mockContext)
@@ -266,14 +265,12 @@ class StateConfigTest {
         assertEquals(PaymentDomainState.PENDING_CONFIRMATION, paymentState)
 
         // Now payment is settled (CAPTURE_FUNDS) and order is marked paid (ORDER_PAID)
-        val mockContextAfterCapture = object : Context {
-            override fun isDone(stepId: StepId): Boolean = when (stepId) {
-                OrderDomainSteps.ORDER_CREATED, OrderDomainSteps.ORDER_PAID -> true
-                PaymentDomainSteps.HOLD_FUNDS, PaymentDomainSteps.CAPTURE_FUNDS -> true
-                else -> false
-            }
-            override val operationSuffix: Any = ""
-        }
+        val mockContextAfterCapture = contextWithDone(
+            OrderDomainSteps.ORDER_CREATED,
+            OrderDomainSteps.ORDER_PAID,
+            PaymentDomainSteps.HOLD_FUNDS,
+            PaymentDomainSteps.CAPTURE_FUNDS
+        )
 
         assertEquals(OrderDomainState.AWAITING_SHIPMENT, orderConfig.evaluate(mockContextAfterCapture))
         assertEquals(PaymentDomainState.SETTLED, paymentConfig.evaluate(mockContextAfterCapture))

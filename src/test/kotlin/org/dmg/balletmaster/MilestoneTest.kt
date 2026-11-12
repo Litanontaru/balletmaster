@@ -52,29 +52,18 @@ class MilestoneTest {
         var currentSuffix = ""
 
         while (true) {
-            val result = processPage(currentPage, currentSuffix)
-            var hasNext = false
-
-            result.fold(
+            val pageData = processPage(currentPage, currentSuffix).fold<PageData>(
                 onFailure = { throw it },
                 onError = { throw it },
                 onState = { status ->
                     // Technical status means processing intentionally did not launch (e.g. BLOCKED, SKIP)
                     fail("Expected step to execute, but got technical status: $status")
                 },
-                onSuccess = { pageData ->
-                    // Application code decides whether to continue to the next iteration
-                    if (!pageData.isLast) {
-                        currentPage = pageData.pageNumber + 1
-                        currentSuffix = "page_${pageData.pageNumber + 1}"
-                        hasNext = true
-                    }
-                }
+                onSuccess = { it }
             )
-
-            if (!hasNext) {
-                break // Exit loop
-            }
+            if (pageData.isLast) break
+            currentPage = pageData.pageNumber + 1
+            currentSuffix = "page_${pageData.pageNumber + 1}"
         }
 
         callContextManager.clear()
@@ -125,7 +114,7 @@ class MilestoneTest {
             }
             .checkPoint()
             // Milestone updates the suffix to "iter-1" and passes input ("start-A0") through
-            .milestone { ctx, input ->
+            .milestone { ctx, _ ->
                 assertEquals("", ctx.operationSuffix)
                 "iter-1"
             }
@@ -208,7 +197,7 @@ class MilestoneTest {
             .input("payload-0")
             .map { _, input -> "$input-processed" }
             .checkPoint()
-            .milestone { ctx, input ->
+            .milestone { _, _ ->
                 // Compute next suffix based on business logic
                 "batch-2"
             }

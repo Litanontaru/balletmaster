@@ -24,16 +24,16 @@ class StoreErrorTest {
         private val failGet: (String) -> Throwable? = { null },
     ) : Store {
         override fun set(key: String, valueChange: Pair<Any?, Any?>): Result<Boolean> =
-            failSetPair(key, valueChange)?.let { Result.failure(it) } ?: delegate.set(key, valueChange)
+            failSetPair(key, valueChange)?.let(Result.Companion::failure) ?: delegate.set(key, valueChange)
 
         override fun set(key: String, value: Any?): Result<Boolean> =
-            failSetValue(key, value)?.let { Result.failure(it) } ?: delegate.set(key, value)
+            failSetValue(key, value)?.let(Result.Companion::failure) ?: delegate.set(key, value)
 
         override fun inc(key: String): Result<Boolean> =
             delegate.inc(key)
 
         override fun <T : Any> get(key: String): Result<T?> =
-            failGet(key)?.let { Result.failure(it) } ?: delegate.get(key)
+            failGet(key)?.let(Result.Companion::failure) ?: delegate.get(key)
     }
 
     @Test

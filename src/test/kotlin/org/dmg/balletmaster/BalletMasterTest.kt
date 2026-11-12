@@ -41,7 +41,7 @@ class BalletMasterTest {
         callContextManager.clear()
 
         assertTrue(result.isSuccess)
-        assertEquals(result, Try.success("C"))
+        assertEquals(Try.success("C"), result)
     }
 
     @Test
@@ -142,13 +142,15 @@ class BalletMasterTest {
         assertEquals(Try.state<String>(TechStatus.NO_CALL), result)
     }
 
+    private fun balletMasterWithRepo(saveResult: Result<Boolean>) = BalletMaster(
+        store = InMemoryStore(),
+        callContextManager = CallContextManager(),
+        stateConfigRepository = stubRepository(saveResult)
+    )
+
     @Test
     fun defineStatesReturnsConfigWhenRepositorySaveSucceeds() {
-        val balletMaster = BalletMaster(
-            store = InMemoryStore(),
-            callContextManager = CallContextManager(),
-            stateConfigRepository = stubRepository(Result.success(true))
-        )
+        val balletMaster = balletMasterWithRepo(Result.success(true))
 
         val config = balletMaster.defineStates<MyStepId, MyState>("order-flow", "1.0.0") {
             state(MyState.DONE) { step(MyStepId.STEP_A) }
@@ -163,11 +165,7 @@ class BalletMasterTest {
     @Test
     fun defineStatesThrowsOriginalExceptionWhenRepositorySaveFails() {
         val storageFailure = RuntimeException("store unavailable")
-        val balletMaster = BalletMaster(
-            store = InMemoryStore(),
-            callContextManager = CallContextManager(),
-            stateConfigRepository = stubRepository(Result.failure(storageFailure))
-        )
+        val balletMaster = balletMasterWithRepo(Result.failure(storageFailure))
 
         val thrown = assertThrows(RuntimeException::class.java) {
             balletMaster.defineStates<MyStepId, MyState>("order-flow", "1.0.0") {
@@ -181,11 +179,7 @@ class BalletMasterTest {
 
     @Test
     fun defineStatesThrowsIllegalStateWhenRepositorySaveReturnsFalse() {
-        val balletMaster = BalletMaster(
-            store = InMemoryStore(),
-            callContextManager = CallContextManager(),
-            stateConfigRepository = stubRepository(Result.success(false))
-        )
+        val balletMaster = balletMasterWithRepo(Result.success(false))
 
         val thrown = assertThrows(IllegalStateException::class.java) {
             balletMaster.defineStates<MyStepId, MyState>("order-flow", "1.0.0") {
