@@ -28,25 +28,18 @@ class CallContextManager(
         store.remove()
     }
 
-    fun get(): CallContext? {
-        return store.get()
-    }
+    fun get(): CallContext? = store.get()
 
     fun off() {
-        store.get()?.also {
-            if (it.isReplay) {
-                val new = it.off()
-                store.set(new)
-                replayOffListener(new)
-            }
-        }
+        store.get()?.takeIf { it.isReplay }?.off()?.also { update(it, replayOffListener) }
     }
 
     fun setSuffix(suffix: Any) {
-        store.get()?.also {
-            val new = it.withSuffix(suffix)
-            store.set(new)
-            suffixListener(new)
-        }
+        store.get()?.withSuffix(suffix)?.also { update(it, suffixListener) }
+    }
+
+    private inline fun update(next: CallContext, listener: (CallContext) -> Unit) {
+        store.set(next)
+        listener(next)
     }
 }

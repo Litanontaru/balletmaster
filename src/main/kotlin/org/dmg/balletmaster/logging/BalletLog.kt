@@ -180,67 +180,38 @@ private fun sanitizeControlChars(raw: String): String {
 }
 
 private fun appendUnicodeEscape(builder: StringBuilder, ch: Char) {
-    builder.append("\\u")
-    val hex = ch.code.toString(16)
-    for (i in hex.length until 4) {
-        builder.append('0')
-    }
-    builder.append(hex)
+    builder.append("\\u").append(ch.code.toString(16).padStart(4, '0'))
 }
 
-internal inline fun Logger.traceEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
-    try {
-        if (isTraceEnabled) {
-            val builder = atTrace().setMessage(event)
-            LogAttrs(builder).apply(attrs)
-            builder.log()
-        }
-    } catch (_: Exception) {
-    }
-}
+internal inline fun Logger.traceEvent(event: String, attrs: LogAttrs.() -> Unit = {}) =
+    emitEvent({ isTraceEnabled }, { atTrace() }, event, attrs = attrs)
 
-internal inline fun Logger.debugEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
-    try {
-        if (isDebugEnabled) {
-            val builder = atDebug().setMessage(event)
-            if (throwable != null) builder.setCause(throwable)
-            LogAttrs(builder).apply(attrs)
-            builder.log()
-        }
-    } catch (_: Exception) {
-    }
-}
+internal inline fun Logger.debugEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) =
+    emitEvent({ isDebugEnabled }, { atDebug() }, event, throwable, attrs)
 
-internal inline fun Logger.infoEvent(event: String, attrs: LogAttrs.() -> Unit = {}) {
-    try {
-        if (isInfoEnabled) {
-            val builder = atInfo().setMessage(event)
-            LogAttrs(builder).apply(attrs)
-            builder.log()
-        }
-    } catch (_: Exception) {
-    }
-}
+internal inline fun Logger.infoEvent(event: String, attrs: LogAttrs.() -> Unit = {}) =
+    emitEvent({ isInfoEnabled }, { atInfo() }, event, attrs = attrs)
 
-internal inline fun Logger.warnEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
-    try {
-        if (isWarnEnabled) {
-            val builder = atWarn().setMessage(event)
-            if (throwable != null) builder.setCause(throwable)
-            LogAttrs(builder).apply(attrs)
-            builder.log()
-        }
-    } catch (_: Exception) {
-    }
-}
+internal inline fun Logger.warnEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) =
+    emitEvent({ isWarnEnabled }, { atWarn() }, event, throwable, attrs)
 
-internal inline fun Logger.errorEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) {
+internal inline fun Logger.errorEvent(event: String, throwable: Throwable? = null, attrs: LogAttrs.() -> Unit = {}) =
+    emitEvent({ isErrorEnabled }, { atError() }, event, throwable, attrs)
+
+internal inline fun emitEvent(
+    isEnabled: () -> Boolean,
+    startEvent: () -> LoggingEventBuilder,
+    event: String,
+    throwable: Throwable? = null,
+    attrs: LogAttrs.() -> Unit
+) {
     try {
-        if (isErrorEnabled) {
-            val builder = atError().setMessage(event)
-            if (throwable != null) builder.setCause(throwable)
-            LogAttrs(builder).apply(attrs)
-            builder.log()
+        if (isEnabled()) {
+            startEvent()
+                .setMessage(event)
+                .apply { throwable?.let(::setCause) }
+                .also { LogAttrs(it).apply(attrs) }
+                .log()
         }
     } catch (_: Exception) {
     }
@@ -252,14 +223,12 @@ internal fun Try<*>.outcomeLabel(): String =
 internal fun Try<*>.stateStatusOrNull(): Value? =
     fold({ null }, { null }, { it }, { null })
 
-internal fun Logger.startDebugTimer(): Long? = try {
-    if (isDebugEnabled) System.nanoTime() else null
-} catch (_: Exception) {
-    null
-}
+internal fun Logger.startDebugTimer(): Long? = startTimer { isDebugEnabled }
 
-internal fun Logger.startWarnTimer(): Long? = try {
-    if (isWarnEnabled) System.nanoTime() else null
+internal fun Logger.startWarnTimer(): Long? = startTimer { isWarnEnabled }
+
+private inline fun startTimer(isEnabled: () -> Boolean): Long? = try {
+    if (isEnabled()) System.nanoTime() else null
 } catch (_: Exception) {
     null
 }

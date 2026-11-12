@@ -25,23 +25,15 @@ class InMemoryStore : Store {
     }
 
     override fun set(key: String, value: Any?): Result<Boolean> {
-        if (value == null) {
-            map.remove(key)
-        } else {
-            map.put(key, value)
-        }
+        if (value == null) map.remove(key) else map[key] = value
         return Result.success(true)
     }
 
     override fun inc(key: String): Result<Boolean> {
-        map.merge(key, 1, { a, b ->
-            (a as Int) + (b as Int)
-        })
+        map.merge(key, 1) { a, b -> (a as Int) + (b as Int) }
         return Result.success(true)
     }
 
-    override fun <T : Any> get(key: String): Result<T?> {
-        @Suppress("UNCHECKED_CAST")
-        return Result.success(map.get(key) as T?)
-    }
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : Any> get(key: String): Result<T?> = Result.success(map[key] as T?)
 }

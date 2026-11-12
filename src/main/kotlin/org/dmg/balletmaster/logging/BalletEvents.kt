@@ -289,15 +289,9 @@ internal object StepLog {
         val call = currentCall(context)
         val suffix = context.currentSuffixOrDefault()
         if (saved) {
-            BalletLoggers.step.debugEvent("step.checkpoint_saved") {
-                correlation(call, stepId, suffix)
-                attr("outcome", output.outcomeLabel())
-            }
+            BalletLoggers.step.debugEvent("step.checkpoint_saved") { checkpointAttrs(call, stepId, suffix, output) }
         } else {
-            BalletLoggers.step.warnEvent("step.checkpoint_not_saved") {
-                correlation(call, stepId, suffix)
-                attr("outcome", output.outcomeLabel())
-            }
+            BalletLoggers.step.warnEvent("step.checkpoint_not_saved") { checkpointAttrs(call, stepId, suffix, output) }
         }
     }
 
@@ -363,5 +357,15 @@ internal object StepLog {
         correlation(call, stepId, suffix)
         attr("phase", phase)
         attr("exception", safeExceptionName(error))
+    }
+
+    private fun LogAttrs.checkpointAttrs(
+        call: CallContext?,
+        stepId: StepId,
+        suffix: Any,
+        output: Try<*>
+    ) {
+        correlation(call, stepId, suffix)
+        attr("outcome", output.outcomeLabel())
     }
 }
