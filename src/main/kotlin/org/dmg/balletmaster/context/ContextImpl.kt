@@ -31,25 +31,16 @@ class ContextImpl(
     private var stepSuffix: Any = ""
     private var lease = DEFAULT_LEASE
 
-    override val operationSuffix: Any get() = call?.operationSuffix ?: ""
-
-    override fun currentCall(): CallContext? = call
-
-    override fun currentSuffix(): Any = stepSuffix
-
-    private fun stepKey(stepId: StepId, attempt: Int? = call?.attempt) =
-        "${call?.operationName}:${call?.operationId}:$attempt:$stepSuffix:$stepId:"
-
     private val key: String get() = stepKey(stepId)
 
     private val previousAttemptKey: String
         get() = stepKey(stepId, call?.attempt?.takeIf { it > 0 }?.dec())
 
-    private fun <T> Result<T>.logStoreFailure(
-        storeOp: String,
-        targetKey: String,
-        targetStepId: StepId = stepId
-    ): Result<T> = logStoreError(call, targetStepId, stepSuffix, storeOp, targetKey)
+    override val operationSuffix: Any get() = call?.operationSuffix ?: ""
+
+    override fun currentCall(): CallContext? = call
+
+    override fun currentSuffix(): Any = stepSuffix
 
     override fun isDone(stepId: StepId): Boolean =
         (stepKey(stepId) + "output").let { targetKey ->
@@ -97,6 +88,44 @@ class ContextImpl(
             BalletMdc.updateReplay(false)
             StepLog.replaySwitchedToLive(call, stepId, stepSuffix)
         }
+    }
+
+    override fun <R : Any> execute(action: () -> Try<R>): Try<R> =
+        BalletMdc.withStepContext(call, stepId, stepSuffix) {
+            if (call == null) Try.state<R>(NO_CALL).also { StepLog.noCall(stepId) }
+            else tryLock() and { acquired ->
+                if (acquired > 0L) executeWithLease(acquired, action) else Try.state(BLOCKED)
+            }
+        }
+
+    private fun <R : Any> executeWithLease(acquired: Long, action: () -> Try<R>): Try<R> {
+        val startNanos = StepLog.startTimer()
+        var unlockResult: Result<Boolean>
+        val stepResult = try {
+            StepLog.stepStarted(call, stepId, stepSuffix, lease, isReplay())
+            runProtectedAction(action)
+        } finally {
+            unlockResult = safeUnlock(acquired)
+        }
+        return (if (stepResult.isError) stepResult else unlockResult and stepResult).also {
+            StepLog.stepCompleted(call, stepId, stepSuffix, it, startNanos)
+        }
+    }
+
+    private fun <R : Any> runProtectedAction(action: () -> Try<R>): Try<R> = try {
+        action()
+    } catch (e: StoreAccessException) {
+        Try.error(e.cause)
+    } catch (e: Exception) {
+        val wrapped = e as? StepExecutionException ?: StepExecutionException(stepId, e)
+        StepLog.unexpectedException(call, stepId, stepSuffix, "execute", e)
+        Try.failure(wrapped)
+    }
+
+    private fun safeUnlock(acquired: Long): Result<Boolean> = try {
+        unlock(acquired)
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     private fun tryLock(): Result<Long> {
@@ -163,41 +192,12 @@ class ContextImpl(
                 .onSuccess { released -> LockLog.unlockOutcome(call, stepId, stepSuffix, expected, released) }
         }
 
-    override fun <R : Any> execute(action: () -> Try<R>): Try<R> =
-        BalletMdc.withStepContext(call, stepId, stepSuffix) {
-            if (call == null) Try.state<R>(NO_CALL).also { StepLog.noCall(stepId) }
-            else tryLock() and { acquired ->
-                if (acquired > 0L) executeWithLease(acquired, action) else Try.state(BLOCKED)
-            }
-        }
+    private fun stepKey(stepId: StepId, attempt: Int? = call?.attempt) =
+        "${call?.operationName}:${call?.operationId}:$attempt:$stepSuffix:$stepId:"
 
-    private fun <R : Any> executeWithLease(acquired: Long, action: () -> Try<R>): Try<R> {
-        val startNanos = StepLog.startTimer()
-        var unlockResult: Result<Boolean>
-        val stepResult = try {
-            StepLog.stepStarted(call, stepId, stepSuffix, lease, isReplay())
-            runProtectedAction(action)
-        } finally {
-            unlockResult = safeUnlock(acquired)
-        }
-        return (if (stepResult.isError) stepResult else unlockResult and stepResult).also {
-            StepLog.stepCompleted(call, stepId, stepSuffix, it, startNanos)
-        }
-    }
-
-    private fun safeUnlock(acquired: Long): Result<Boolean> = try {
-        unlock(acquired)
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
-
-    private fun <R : Any> runProtectedAction(action: () -> Try<R>): Try<R> = try {
-        action()
-    } catch (e: StoreAccessException) {
-        Try.error(e.cause)
-    } catch (e: Exception) {
-        val wrapped = e as? StepExecutionException ?: StepExecutionException(stepId, e)
-        StepLog.unexpectedException(call, stepId, stepSuffix, "execute", e)
-        Try.failure(wrapped)
-    }
+    private fun <T> Result<T>.logStoreFailure(
+        storeOp: String,
+        targetKey: String,
+        targetStepId: StepId = stepId
+    ): Result<T> = logStoreError(call, targetStepId, stepSuffix, storeOp, targetKey)
 }
