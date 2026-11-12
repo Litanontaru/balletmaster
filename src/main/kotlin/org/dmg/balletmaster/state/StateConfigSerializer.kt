@@ -39,55 +39,43 @@ internal class IsEmptyDto : ConditionDto {
 }
 
 class StateConfigSerializer(val mapper: ObjectMapper = jacksonObjectMapper()) {
-    fun <S : StepId, STATE : Any> serialize(config: StateConfig<S, STATE>): String {
-        val rulesDto = config.rules.map { rule ->
-            StateRuleDto(
-                state = mapper.valueToTree(rule.state),
-                condition = toConditionDto(rule.condition, mapper)
-            )
-        }
-        val dto = StateConfigDto(
+    fun <S : StepId, STATE : Any> serialize(config: StateConfig<S, STATE>): String =
+        StateConfigDto(
             operationName = config.operationName,
             version = config.version,
-            rules = rulesDto,
+            rules = config.rules.map { StateRuleDto(mapper.valueToTree(it.state), toConditionDto(it.condition)) },
             defaultState = mapper.valueToTree(config.defaultState)
-        )
-        return mapper.writeValueAsString(dto)
-    }
+        ).let(mapper::writeValueAsString)
 
     fun <S : StepId, STATE : Any> deserialize(
         json: String,
         stepClass: Class<S>,
         stateClass: Class<STATE>
-    ): StateConfig<S, STATE> {
-        val dto = mapper.readValue(json, StateConfigDto::class.java)
-        val defaultState = mapper.treeToValue(dto.defaultState, stateClass)
-        val rawRules = dto.rules.map { ruleDto ->
-            val state = mapper.treeToValue(ruleDto.state, stateClass)
-            val condition = fromConditionDto(ruleDto.condition, stepClass, mapper)
-            StateRule(state, condition)
+    ): StateConfig<S, STATE> = mapper.readValue(json, StateConfigDto::class.java).let { dto ->
+        val rawRules = dto.rules.map {
+            StateRule(mapper.treeToValue(it.state, stateClass), fromConditionDto(it.condition, stepClass))
         }
-        val allSteps = rawRules.flatMap { it.condition.referencedSteps }.toSet()
-        val resolvedRules = rawRules.map { rule ->
-            val resolvedCondition = if (rule.condition is IsEmpty) IsEmpty(allSteps) else rule.condition
-            StateRule(rule.state, resolvedCondition)
-        }
-        return StateConfig(dto.operationName, dto.version, resolvedRules, defaultState)
+        StateConfig(
+            operationName = dto.operationName,
+            version = dto.version,
+            rules = resolveEmptyConditions(rawRules),
+            defaultState = mapper.treeToValue(dto.defaultState, stateClass)
+        )
     }
 
-    private fun <S : StepId> toConditionDto(condition: Condition<S>, mapper: ObjectMapper): ConditionDto = when (condition) {
+    private fun <S : StepId> toConditionDto(condition: Condition<S>): ConditionDto = when (condition) {
         is StepDone -> StepDoneDto(mapper.valueToTree(condition.step))
-        is AllOf -> AllOfDto(condition.conditions.map { toConditionDto(it, mapper) })
-        is AnyOf -> AnyOfDto(condition.conditions.map { toConditionDto(it, mapper) })
-        is NoneOf -> NoneOfDto(condition.conditions.map { toConditionDto(it, mapper) })
+        is AllOf -> AllOfDto(condition.conditions.map(::toConditionDto))
+        is AnyOf -> AnyOfDto(condition.conditions.map(::toConditionDto))
+        is NoneOf -> NoneOfDto(condition.conditions.map(::toConditionDto))
         is IsEmpty -> IsEmptyDto()
     }
 
-    private fun <S : StepId> fromConditionDto(dto: ConditionDto, stepClass: Class<S>, mapper: ObjectMapper): Condition<S> = when (dto) {
+    private fun <S : StepId> fromConditionDto(dto: ConditionDto, stepClass: Class<S>): Condition<S> = when (dto) {
         is StepDoneDto -> StepDone(mapper.treeToValue(dto.step, stepClass))
-        is AllOfDto -> AllOf(dto.conditions.map { fromConditionDto(it, stepClass, mapper) })
-        is AnyOfDto -> AnyOf(dto.conditions.map { fromConditionDto(it, stepClass, mapper) })
-        is NoneOfDto -> NoneOf(dto.conditions.map { fromConditionDto(it, stepClass, mapper) })
+        is AllOfDto -> AllOf(dto.conditions.map { fromConditionDto(it, stepClass) })
+        is AnyOfDto -> AnyOf(dto.conditions.map { fromConditionDto(it, stepClass) })
+        is NoneOfDto -> NoneOf(dto.conditions.map { fromConditionDto(it, stepClass) })
         is IsEmptyDto -> IsEmpty()
     }
 }

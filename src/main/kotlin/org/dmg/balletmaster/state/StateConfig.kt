@@ -13,14 +13,8 @@ data class StateConfig<S : StepId, STATE : Any>(
         rules.flatMap { it.condition.referencedSteps }.toSet()
     }
 
-    fun evaluate(isDone: (S) -> Boolean): STATE {
-        for (rule in rules) {
-            if (rule.condition.evaluate(isDone)) {
-                return rule.state
-            }
-        }
-        return defaultState
-    }
+    fun evaluate(isDone: (S) -> Boolean): STATE =
+        rules.firstOrNull { it.condition.evaluate(isDone) }?.state ?: defaultState
 
-    fun evaluate(context: Context): STATE = evaluate { step -> context.isDone(step) }
+    fun evaluate(context: Context): STATE = evaluate(context::isDone)
 }

@@ -40,12 +40,11 @@ class ProcessSupervisor(
         suffix: Any = ""
     ): Result<STATE> =
         repository.getLatest(operationName, versionPrefix, stepClass, stateClass) + { config ->
-            if (config == null) {
-                StateLog.configNotFound(operationName, versionPrefix)
-                Result.failure(NoSuchElementException("StateConfig not found for operation='$operationName' with versionPrefix='$versionPrefix'"))
-            } else {
-                resolveWithConfig(operationName, operationId, versionPrefix, attempt, suffix, config)
-            }
+            config?.let { resolveWithConfig(operationName, operationId, versionPrefix, attempt, suffix, it) }
+                ?: run {
+                    StateLog.configNotFound(operationName, versionPrefix)
+                    Result.failure(NoSuchElementException("StateConfig not found for operation='$operationName' with versionPrefix='$versionPrefix'"))
+                }
         }
 
     private fun <S : StepId, STATE : Any> resolveWithConfig(
@@ -56,11 +55,10 @@ class ProcessSupervisor(
         suffix: Any,
         config: StateConfig<S, STATE>
     ): Result<STATE> = try {
-        val state = config.evaluate { stepId ->
-            isStepCompleted(operationName, operationId, attempt, suffix, stepId)
+        val state = config.evaluate { isStepCompleted(operationName, operationId, attempt, suffix, it) }
+        Result.success(state).also {
+            StateLog.resolved(operationName, operationId, attempt, suffix, config.version, versionPrefix, state)
         }
-        StateLog.resolved(operationName, operationId, attempt, suffix, config.version, versionPrefix, state)
-        Result.success(state)
     } catch (e: SupervisorStoreReadException) {
         Result.failure(e.cause)
     }
@@ -71,9 +69,8 @@ class ProcessSupervisor(
         attempt: Int,
         suffix: Any,
         stepId: StepId
-    ): Boolean {
-        val key = "$operationName:$operationId:$attempt:$suffix:$stepId:output"
-        return store.get<Try<*>>(key)
+    ): Boolean = "$operationName:$operationId:$attempt:$suffix:$stepId:output".let { key ->
+        store.get<Try<*>>(key)
             .logStoreError(operationName, operationId, attempt, suffix, stepId, "supervisor_step_check", key)
             .getOrElse { throw SupervisorStoreReadException(it) }
             ?.isSuccess == true
