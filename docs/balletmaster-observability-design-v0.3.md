@@ -33,7 +33,7 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 2. В `core` находятся `Step`, `ContextImpl`, `CallContextManager`, `Try`, API `Store`, `InMemoryStore`, Replay, Lease, StateConfig и `ProcessSupervisor`.
 3. Системное логирование использует **SLF4J 2.0 Fluent API** (`addKeyValue`) и MDC; backend и формат вывода настраивает приложение-хост. **Сам SDK не гарантирует JSON в выходном потоке.**
 4. Есть категории `step`, `lock`, `replay`, `store`, `state`, фиксированный каталог событий и корреляционные поля `ballet.operation`, `ballet.operationId`, `ballet.attempt`, `ballet.suffix`, `ballet.step`, `ballet.replay`.
-5. Основные события жизненного цикла (`step.started`, `step.completed`, `chain.stopped`) сейчас **DEBUG**; события блокировок частично TRACE, аномалии — WARN/ERROR. **Из логов уровня INFO нельзя рассчитывать восстановить полную историю шагов.**
+5. Основные события жизненного цикла на каждый шаг (`step.started`, `step.completed`, `step.skipped_gate`, `step.skipped_idempotent`, `chain.stopped` с `status=SKIP`) — **DEBUG**; события блокировок (`lock.acquired`, `lock.released`, `lock.contention_wait`) — **TRACE**; значимые неуспехи и блокировки (`step.exception` для `gate`/`map`/`milestone`, `lock.blocked`, `chain.stopped` для `Failure`/`Error`/`BLOCKED`/`NO_CALL`) — **INFO**; аномалии — WARN/ERROR. **Из логов уровня INFO нельзя рассчитывать восстановить полную историю шагов, но видны неуспешные остановки, бизнес-исключения и блокировки.**
 6. Нет реализации чтения из Loki/облаков, потоковых адаптеров, готовых облачных правил мониторинга, Investigation Engine и Reaction Runtime.
 7. `CallContextManager` и MDC используют контекст текущего потока (`ThreadLocal`/SLF4J MDC); автоматический перенос контекста на другой поток или в coroutine/async execution не гарантирован.
 8. Текущий `Store` предоставляет точечные операции `get`/`set`/`inc` и CAS-подобный условный `set`, но не предоставляет API перечисления шагов, попыток, суффиксов или истории операции. Ключи исполнения формируются внутри `ContextImpl`. Чтение persisted output может потребовать доменных классов приложения. Существующий `ProcessSupervisor` может вычислить состояние по `StateConfig`, не отдавая пользовательские payload'ы, но требует классы доменной модели (`Class<S>` и `Class<STATE>`) и проверяет факты для **конкретных** `attempt` и `suffix`. Он не является универсальным API инспекции истории.
@@ -73,7 +73,7 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 
 ### 5.6. Production-события — блокирующий архитектурный вопрос
 
-Существующий профиль `INFO` **не обеспечивает полную наблюдаемость жизненного цикла**. На `INFO` доступны лишь выбранные `INFO`/`WARN`/`ERROR` события, а `step.started`, `step.completed`, `chain.stopped`, штатные пропуски и обычные бизнес-исключения (DEBUG) отсутствуют. Это не дефект текущего System Logging: он проектировался как малошумная диагностика. Но **полноценный Streaming / process-aware monitoring на базе этих логов при стандартной конфигурации невозможен**.
+Существующий профиль `INFO` **не обеспечивает полную наблюдаемость жизненного цикла**. После уточнения `Event-level policy` на `INFO` доступны `replay.switched_to_live`, `state.config_saved`, бизнес-`step.exception`, `lock.blocked`, не-`SKIP` `chain.stopped` и все `WARN`/`ERROR` события, а `step.started`, `step.completed`, `step.skipped_gate`, `step.skipped_idempotent` и `chain.stopped(SKIP)` остаются в `DEBUG`. Это осознанный баланс малошумности и диагностики неуспехов; **полноценный Streaming / process-aware monitoring всех шагов при стандартной `INFO`-конфигурации по-прежнему невозможен**.
 
 До production-дизайна нужно выбрать и измерить одну или комбинацию стратегий:
 
@@ -305,9 +305,13 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 6. Вопросы `INFO`/`DEBUG`, direct telemetry hook, `executionId` и Store inspection **не закрыты**; не реализовывать их без отдельного согласования.
 7. Коммуницировать и готовить отчёты на русском языке.
 
+## Отложенные мысли
+
+- **Управление рисками объёма логов через конфигурирование:** повышенный объём `INFO`-логов при частых бизнес-исключениях или конкуренции по локам (а также тонкое управление видимостью отдельных категорий/событий без включения глобального `DEBUG`) решать через конфигурирование logging backend / сборщика / фильтров в приложении-хосте, не перегружая `core` встроенными настройками уровня или движком фильтрации.
+
 ## 15. Ссылки
 
-**Предупреждение о документации Core:** в существующем `docs/logging.md` после переноса исходников в `core/` могут оставаться относительные ссылки на старые пути `../src/main/...`; их нужно исправить отдельным документационным изменением.
+**Документация Core:** ссылки в [`docs/logging.md`](logging.md) на `../core/src/main/...` актуализированы после переноса исходников в `core/`.
 
 **Внутренние:** [`logging.md`](logging.md), [`../pom.xml`](../pom.xml), [`../core/pom.xml`](../core/pom.xml), [`../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt`](../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt), [`../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt`](../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt).
 

@@ -143,7 +143,7 @@ internal object LockLog {
         attempts: Int,
         interrupted: Boolean
     ) {
-        BalletLoggers.lock.debugEvent("lock.blocked") {
+        BalletLoggers.lock.infoEvent("lock.blocked") {
             correlation(call, stepId, suffix)
             attr("status", BLOCKED)
             attr("leaseMs", leaseMs)
@@ -187,6 +187,8 @@ internal object LockLog {
 internal object StepLog {
     fun startTimer(): Long? = BalletLoggers.step.startDebugTimer()
 
+    fun startChainTimer(): Long? = BalletLoggers.step.startInfoTimer()
+
     fun currentCall(context: InternalContext): CallContext? =
         (context as? LoggingContext)?.currentCall()
 
@@ -222,7 +224,7 @@ internal object StepLog {
         stepId: StepId,
         phase: String,
         error: Exception
-    ) = BalletLoggers.step.debugEvent("step.exception") {
+    ) = BalletLoggers.step.infoEvent("step.exception") {
         stepExceptionAttrs(currentCall(context), stepId, context.currentSuffixOrDefault(), phase, error)
     }
 
@@ -312,14 +314,34 @@ internal object StepLog {
         val call = currentCall(context)
         val suffix = context.currentSuffixOrDefault()
         BalletMdc.applyContext(call, stepId, suffix)
-        BalletLoggers.step.debugEvent("chain.stopped") {
-            correlation(call, stepId, suffix)
-            attr("executedSteps", executedSteps)
-            attr("totalSteps", totalSteps)
-            attr("outcome", result.outcomeLabel())
-            attr("status", result.stateStatusOrNull())
-            attr("durationMs", elapsedMillis(startNanos))
+        val status = result.stateStatusOrNull()
+        if (status == SKIP) {
+            BalletLoggers.step.debugEvent("chain.stopped") {
+                chainStoppedAttrs(call, stepId, suffix, executedSteps, totalSteps, result, status, startNanos)
+            }
+        } else {
+            BalletLoggers.step.infoEvent("chain.stopped") {
+                chainStoppedAttrs(call, stepId, suffix, executedSteps, totalSteps, result, status, startNanos)
+            }
         }
+    }
+
+    private fun LogAttrs.chainStoppedAttrs(
+        call: CallContext?,
+        stepId: StepId,
+        suffix: Any,
+        executedSteps: Int,
+        totalSteps: Int,
+        result: Try<*>,
+        status: Any?,
+        startNanos: Long?
+    ) {
+        correlation(call, stepId, suffix)
+        attr("executedSteps", executedSteps)
+        attr("totalSteps", totalSteps)
+        attr("outcome", result.outcomeLabel())
+        attr("status", status)
+        attr("durationMs", elapsedMillis(startNanos))
     }
 
     fun chainCompleted(context: InternalContext, totalSteps: Int, startNanos: Long?) {

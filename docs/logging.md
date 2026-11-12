@@ -8,7 +8,7 @@
 * **Интеграция через SLF4J 2.0:** используется только `org.slf4j:slf4j-api` версии 2.0+ (`LoggerFactory`, `Logger`, `LoggingEventBuilder` / `addKeyValue`, `MDC`) без собственного JSON-форматирования. Приложение-хост само подключает и настраивает совместимый бэкенд (Logback 1.4+/1.5+, Log4j2 через `log4j-slf4j2-impl` и т.д.).
 * **Минимизация утечек чувствительных данных:** SDK не записывает в логи содержимое пользовательских `input`/`output` и аргументы бизнес-лямбд; для бизнес-исключений (`step.exception`) фиксируется только имя класса исключения без `message` и stack trace (полное исключение возвращается приложению через `Try.failure`), а для не-`Enum` состояний в `state.resolved` логируется только имя класса без вызова `toString()`. При этом идентификаторы (`ballet.operation`, `ballet.operationId`, `ballet.suffix`), сформированные из них ключи `Store` (`key`) и инфраструктурные исключения `store.error` / `lock.wait_interrupted` передаются в логи как есть — приложение не должно помещать секреты или PII в идентификаторы операций, суффиксы и сообщения драйвера `Store`.
 * **Минимальные накладные расходы:** построение атрибутов обёрнуто в `isTraceEnabled` / `isDebugEnabled` / `isInfoEnabled` / `isWarnEnabled` / `isErrorEnabled`, поэтому выключенные уровни не создают лишних аллокаций.
-* **Тишина на нормальном трафике (`INFO`):** штатные операции на каждый шаг пишутся в `DEBUG` и `TRACE`. На `INFO` фиксируются только редкие значимые события смены режима/конфигурации (`replay.switched_to_live`, `state.config_saved`), на `WARN` — аномалии конкурентности, отсутствие контекста и непредвиденные сбои (бизнес-исключения шагов пишутся в `DEBUG` и возвращаются через `Try.failure`), на `ERROR` — инфраструктурные ошибки `Store`.
+* **Тишина на нормальном трафике (`INFO`):** штатные операции на каждый шаг и ожидаемые пропуски (`gate`/`idempotency`) пишутся в `DEBUG` и `TRACE`. На `INFO` фиксируются значимые события смены режима/конфигурации (`replay.switched_to_live`, `state.config_saved`), бизнес-исключения шагов (`step.exception`), блокировка лока (`lock.blocked`) и досрочная остановка цепочки при неуспехе или блокировке (`chain.stopped` для `Failure`/`Error`/`BLOCKED`/`NO_CALL`; при `status=SKIP` остаётся `DEBUG`), на `WARN` — аномалии конкурентности, отсутствие контекста и непредвиденные сбои (`step.exception` в fallback-перехвате), на `ERROR` — инфраструктурные ошибки `Store`.
 
 ---
 
@@ -22,7 +22,7 @@
 | `org.dmg.balletmaster.step` | Жизненный цикл цепочки и шагов: старт, завершение, гейты, идемпотентность, `milestone`, `checkPoint`, бизнес-исключения (`StepExecutionException`), `NO_CALL` |
 | `org.dmg.balletmaster.lock` | Захват и освобождение `:timeout`-аренды (`tryLock`/`unlock`), ожидание лока, перехват истекших аренд, `BLOCKED`, пропуск протухшего `unlock` |
 | `org.dmg.balletmaster.replay` | Попадания и промахи кэша при `Replay`, переключение `Replay -> Live` |
-| `org.dmg.balletmaster.store` | Системные ошибки чтения/записи [`Store`](../src/main/kotlin/org/dmg/balletmaster/store/Store.kt) (`Result.failure`) во всех компонентах SDK |
+| `org.dmg.balletmaster.store` | Системные ошибки чтения/записи [`Store`](../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt) (`Result.failure`) во всех компонентах SDK |
 | `org.dmg.balletmaster.state` | Сохранение схем состояний и расчёт состояния процесса в `ProcessSupervisor` |
 
 ---
@@ -60,7 +60,7 @@
 |---|---|---|
 | `chain.started` | `DEBUG` | Старт выполнения непустой цепочки (`stepsCount`, `steps`) |
 | `chain.completed` | `DEBUG` | Успешное завершение всей цепочки (`stepsCount`, `durationMs`) |
-| `chain.stopped` | `DEBUG` | Досрочная остановка цепочки из-за неуспеха шага (`executedSteps`, `totalSteps`, `outcome`, `status`, `durationMs`) |
+| `chain.stopped` | `DEBUG` / `INFO` | Досрочная остановка цепочки (`executedSteps`, `totalSteps`, `outcome`, `status`, `durationMs`): `DEBUG` при ожидаемом `status=SKIP`, `INFO` при `Failure`, `Error`, `BLOCKED`, `NO_CALL` |
 | `step.started` | `DEBUG` | Вход в защищённое исполнение шага после захвата лока (`leaseMs`, `ballet.replay`) |
 | `step.completed` | `DEBUG` | Завершение шага с итогом и длительностью (`outcome`, `status`, `durationMs`) |
 | `step.skipped_gate` | `DEBUG` | Предикат `gate` вернул `false` (`status=SKIP`) |
@@ -68,7 +68,7 @@
 | `step.milestone_updated` | `DEBUG` | `milestone` обновил `operationSuffix` (`ballet.suffix`, `newSuffix`) |
 | `step.checkpoint_saved` | `DEBUG` | `checkPoint` сохранил `Success` или `Failure` в `Store` (`outcome`) |
 | `step.checkpoint_bypassed` | `TRACE` | `checkPoint` пропустил запись для `State` или `Error` (`outcome`, `status`) |
-| `step.exception` | `DEBUG` / `WARN` | Бизнес-исключение внутри `gate`/`map`/`milestone` (`DEBUG`) или непредвиденный fallback-перехват в `ContextImpl.execute` (`WARN`); логируется только класс исключения без `message`/stack trace (`phase`, `exception`) |
+| `step.exception` | `INFO` / `WARN` | Бизнес-исключение внутри `gate`/`map`/`milestone` (`INFO`) или непредвиденный fallback-перехват в `ContextImpl.execute` (`WARN`); логируется только класс исключения без `message`/stack trace (`phase`, `exception`) |
 | `step.no_call` | `WARN` | Шаг вызван без активного `CallContext` в `CallContextManager` (`ballet.step`, `status=NO_CALL`) |
 
 ### 4.2 `org.dmg.balletmaster.lock`
@@ -78,7 +78,7 @@
 | `lock.contention_wait` | `TRACE` | Очередная пауза ожидания занятого лока (`attemptNo`, `elapsedMs`) |
 | `lock.released` | `TRACE` | Лок успешно снят владельцем (`leaseUntil`) |
 | `lock.stolen_expired` | `WARN` | Захвачен истекший лок предыдущего/зависшего воркера (`leaseMs`, `leaseUntil`, `waitMs`, `attempts`) |
-| `lock.blocked` | `DEBUG` | Лок не получен до истечения `lease` (`status=BLOCKED`, `leaseMs`, `waitMs`, `attempts`, `interrupted`) |
+| `lock.blocked` | `INFO` | Лок не получен до истечения `lease` (`status=BLOCKED`, `leaseMs`, `waitMs`, `attempts`, `interrupted`) |
 | `lock.wait_interrupted` | `WARN` | Поток ожидания лока был прерван (`attempts`, `waitMs`, `InterruptedException`) |
 | `lock.stale_unlock_skipped` | `WARN` | Поздний `unlock` протухшего владельца отклонён CAS-проверкой (`expectedLeaseUntil`) |
 
@@ -155,6 +155,6 @@ logging:
 
 1. **Поточность MDC:** SLF4J `MDC` хранит контекст в `ThreadLocal`. Если прикладной код внутри `.map { ... }` уходит в пулы потоков или корутины без переноса `MDC`/`CallContext`, дочерние потоки не увидят `ballet.*` автоматически (связано с общей задачей переноса контекста при async execution).
 2. **Операции над `StateConfigRepository` вне `Step`:** `state.config_saved` и `store.error` при работе с конфигом пишутся с атрибутом `ballet.operation` в `KeyValuePair`, но без `MDC`-контекста конкретного шага.
-3. **Расширение в сторону OpenTelemetry и Execution Investigation:** все события централизованы в [`BalletLog.kt`](../src/main/kotlin/org/dmg/balletmaster/logging/BalletLog.kt) через единые `event`-идентификаторы, типовые атрибуты и `BalletMdc`. В будущем в этой же точке можно без ломки вызовов подключить:
+3. **Расширение в сторону OpenTelemetry и Execution Investigation:** все события централизованы в [`BalletLog.kt`](../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletLog.kt) через единые `event`-идентификаторы, типовые атрибуты и `BalletMdc`. В будущем в этой же точке можно без ломки вызовов подключить:
    * мост к OpenTelemetry (`Span.current().addEvent(...)` / span-атрибуты `ballet.*`);
    * публикацию структурированных событий в будущий Execution Journal или аудит-приёмник.

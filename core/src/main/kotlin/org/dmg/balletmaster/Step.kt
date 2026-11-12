@@ -78,7 +78,7 @@ class Step<T : Any> private constructor(
     }
 
     fun execute(): Try<T> = BalletMdc.withChainContext(StepLog.currentCall(context)) {
-        val startNanos = StepLog.startTimer()
+        val startNanos = StepLog.startChainTimer()
         val totalSteps = chain.steps.size
         StepLog.chainStarted(context, totalSteps) { chain.steps.joinToString(",") { it.stepId.toString() } }
 

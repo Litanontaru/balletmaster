@@ -227,6 +227,8 @@ internal fun Try<*>.stateStatusOrNull(): Value? =
 
 internal fun Logger.startDebugTimer(): Long? = startTimer { isDebugEnabled }
 
+internal fun Logger.startInfoTimer(): Long? = startTimer { isInfoEnabled }
+
 internal fun Logger.startWarnTimer(): Long? = startTimer { isWarnEnabled }
 
 private inline fun startTimer(isEnabled: () -> Boolean): Long? = try {

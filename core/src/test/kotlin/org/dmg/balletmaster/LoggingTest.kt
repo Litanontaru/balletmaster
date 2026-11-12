@@ -13,6 +13,7 @@ import org.dmg.balletmaster.logging.BalletMdc
 import org.dmg.balletmaster.logging.debugEvent
 import org.dmg.balletmaster.logging.elapsedMillis
 import org.dmg.balletmaster.logging.startDebugTimer
+import org.dmg.balletmaster.logging.startInfoTimer
 import org.dmg.balletmaster.logging.startWarnTimer
 import org.dmg.balletmaster.state.ProcessSupervisor
 import org.dmg.balletmaster.state.StoreStateConfigRepository
@@ -254,10 +255,16 @@ class LoggingTest {
             assertEquals("STEP_B", idempotentSkip[0].attrs()[BalletMdc.STEP])
 
             val stopped = events("chain.stopped", Level.DEBUG)
-            assertTrue(stopped.any {
+            assertEquals(2, stopped.size)
+            assertTrue(stopped.all {
                 val attrs = it.attrs()
                 attrs["outcome"] == "STATE" && attrs["status"] == "SKIP"
             })
+
+            val infoStopped = events("chain.stopped", Level.INFO)
+            assertEquals(1, infoStopped.size)
+            assertEquals("STATE", infoStopped[0].attrs()["outcome"])
+            assertEquals("NO_CALL", infoStopped[0].attrs()["status"])
         } finally {
             callContextManager.clear()
         }
@@ -335,7 +342,7 @@ class LoggingTest {
         assertNotNull(returnedCause)
         assertTrue(returnedCause?.cause?.message?.contains("CARD_4111_SENSITIVE") == true)
 
-        val exEvents = events("step.exception", Level.DEBUG)
+        val exEvents = events("step.exception", Level.INFO)
         assertEquals(1, exEvents.size)
         assertEquals("map", exEvents[0].attrs()["phase"])
         assertEquals("IllegalArgumentException", exEvents[0].attrs()["exception"])
@@ -358,7 +365,7 @@ class LoggingTest {
                 }
         })
 
-        val stopped = events("chain.stopped", Level.DEBUG)
+        val stopped = events("chain.stopped", Level.INFO)
         assertEquals(1, stopped.size)
         assertEquals("FAILURE", stopped[0].attrs()["outcome"])
     }
@@ -393,7 +400,7 @@ class LoggingTest {
         assertEquals("99", storeErrors[0].attrs()[BalletMdc.OPERATION_ID])
         assertNotNull(storeErrors[0].throwableProxy)
 
-        val stopped = events("chain.stopped", Level.DEBUG)
+        val stopped = events("chain.stopped", Level.INFO)
         assertEquals(1, stopped.size)
         assertEquals("ERROR", stopped[0].attrs()["outcome"])
     }
@@ -457,7 +464,7 @@ class LoggingTest {
         assertEquals(1, events("lock.acquired", Level.TRACE).size)
         assertEquals(1, events("lock.stolen_expired", Level.WARN).size)
         assertEquals(1, events("lock.stale_unlock_skipped", Level.WARN).size)
-        assertEquals(1, events("lock.blocked", Level.DEBUG).size)
+        assertEquals(1, events("lock.blocked", Level.INFO).size)
         assertEquals(1, events("lock.released", Level.TRACE).size)
         assertTrue(events("lock.stolen_expired").all { it.loggerName == BalletLoggers.LOCK })
         assertFalse(events("lock.contention_wait", Level.TRACE).isEmpty())
@@ -646,8 +653,13 @@ class LoggingTest {
     fun logTimersSkipNanoTimeWhenLoggingLevelDisabled() {
         sdkLogger.level = Level.INFO
         assertNull(BalletLoggers.step.startDebugTimer())
+        assertNotNull(BalletLoggers.step.startInfoTimer())
         assertNotNull(BalletLoggers.lock.startWarnTimer())
         assertNull(elapsedMillis(null))
+
+        sdkLogger.level = Level.WARN
+        assertNull(BalletLoggers.step.startInfoTimer())
+        assertNotNull(BalletLoggers.lock.startWarnTimer())
 
         sdkLogger.level = Level.ERROR
         assertNull(BalletLoggers.lock.startWarnTimer())
@@ -1010,7 +1022,7 @@ class LoggingTest {
             callContextManager.clear()
         }
 
-        val chainStopped = events("chain.stopped", Level.DEBUG).single()
+        val chainStopped = events("chain.stopped", Level.INFO).single()
         assertEquals("chainStopOp", chainStopped.mdcPropertyMap[BalletMdc.OPERATION])
         assertEquals("ch-2", chainStopped.mdcPropertyMap[BalletMdc.OPERATION_ID])
         assertEquals("STEP_B", chainStopped.mdcPropertyMap[BalletMdc.STEP])
@@ -1188,5 +1200,78 @@ class LoggingTest {
         assertEquals("t-nested", MDC.get("traceId"))
         assertEquals("host-step", MDC.get(BalletMdc.STEP))
         assertNull(MDC.get(BalletMdc.OPERATION))
+    }
+
+    @Test
+    fun infoLevelSilencesNormalAndSkipTrafficWhileCapturingFailuresAndBlockedStops() {
+        sdkLogger.level = Level.INFO
+        val store = InMemoryStore()
+        val callContextManager = CallContextManager()
+        val balletMaster = BalletMaster(store, callContextManager)
+
+        callContextManager.store("infoOp", "1", isReplay = false, attempt = 0)
+        try {
+            // 1. Happy path + gate SKIP + idempotent SKIP produce zero INFO events
+            assertTrue(
+                balletMaster.start().step(Steps.STEP_A).map { _, _ -> "ok" }.checkPoint().execute().isSuccess
+            )
+            assertTrue(
+                balletMaster.start().step(Steps.STEP_A).map { _, _ -> "dup" }.checkPoint().execute().isState
+            )
+            assertTrue(
+                balletMaster.start().step(Steps.STEP_B).gate { _, _ -> false }.map { _, _ -> "skip" }.execute().isState
+            )
+            assertTrue(appender.list.isEmpty())
+
+            // 2. Business exception + FAILURE chain.stopped are visible on INFO with durationMs
+            val failRes = balletMaster.start()
+                .step(Steps.STEP_B)
+                .map { _, _ -> throw IllegalArgumentException("sensitive-msg") }
+                .execute()
+            assertTrue(failRes.isFailure)
+        } finally {
+            callContextManager.clear()
+        }
+
+        // 3. Concurrent lock BLOCKED + BLOCKED chain.stopped are visible on INFO
+        val lockCall = CallContext("infoOp", "lock-1", isReplay = false, attempt = 0)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val holder = Thread {
+            ContextImpl(store, { lockCall }, {}).apply {
+                setStep(Steps.STEP_A)
+                setLease(1000L)
+            }.execute {
+                entered.countDown()
+                assertTrue(release.await(5, TimeUnit.SECONDS))
+                Try.success("held")
+            }
+        }
+        holder.start()
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        try {
+            callContextManager.store("infoOp", "lock-1", isReplay = false, attempt = 0)
+            val blockedRes = balletMaster.start()
+                .step(Steps.STEP_A)
+                .lease(20L)
+                .map { _, _ -> "blocked" }
+                .execute()
+            assertTrue(blockedRes.isState)
+        } finally {
+            callContextManager.clear()
+            release.countDown()
+            holder.join(5000)
+        }
+
+        assertEquals(1, events("step.exception", Level.INFO).size)
+        assertEquals(1, events("lock.blocked", Level.INFO).size)
+        val stopped = events("chain.stopped", Level.INFO)
+        assertEquals(2, stopped.size)
+        assertEquals(setOf("FAILURE", "STATE"), stopped.map { it.attrs()["outcome"] }.toSet())
+        assertTrue(stopped.all { it.attrs()["durationMs"] != null })
+        assertTrue(stopped.any { it.attrs()["status"] == "BLOCKED" })
+        assertTrue(events("chain.completed").isEmpty())
+        assertTrue(events("step.skipped_gate").isEmpty())
+        assertTrue(events("step.skipped_idempotent").isEmpty())
     }
 }
