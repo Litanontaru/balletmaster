@@ -29,12 +29,12 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 
 ## 3. Текущее состояние (реализовано)
 
-1. Репозиторий уже использует **multi-module Maven**: корневой `pom.xml` — `packaging=pom`, код размещён в модуле `core/`; других модулей пока нет. Существующие Maven-координаты — `org.example:ballet-master:1.0-SNAPSHOT`, артефакт модуля — `core`. Предлагаемые ниже имена модулей пока условные.
+1. Репозиторий использует **multi-module Maven**: корневой `pom.xml` (`packaging=pom`), рабочий модуль ядра `core/` и библиотечный адаптер первого среза `loki-query/`. Координаты — `org.example:ballet-master:1.0-SNAPSHOT`, артефакты — `core` и `loki-query`.
 2. В `core` находятся `Step`, `ContextImpl`, `CallContextManager`, `Try`, API `Store`, `InMemoryStore`, Replay, Lease, StateConfig и `ProcessSupervisor`.
 3. Системное логирование использует **SLF4J 2.0 Fluent API** (`addKeyValue`) и MDC; backend и формат вывода настраивает приложение-хост. **Сам SDK не гарантирует JSON в выходном потоке.**
 4. Есть категории `step`, `lock`, `replay`, `store`, `state`, фиксированный каталог событий и корреляционные поля `ballet.operation`, `ballet.operationId`, `ballet.attempt`, `ballet.suffix`, `ballet.step`, `ballet.replay`.
 5. Основные события жизненного цикла на каждый шаг (`step.started`, `step.completed`, `step.skipped_gate`, `step.skipped_idempotent`, `chain.stopped` с `status=SKIP`) — **DEBUG**; события блокировок (`lock.acquired`, `lock.released`, `lock.contention_wait`) — **TRACE**; значимые неуспехи и блокировки (`step.exception` для `gate`/`map`/`milestone`, `lock.blocked`, `chain.stopped` для `Failure`/`Error`/`BLOCKED`/`NO_CALL`) — **INFO**; аномалии — WARN/ERROR. **Из логов уровня INFO нельзя рассчитывать восстановить полную историю шагов, но видны неуспешные остановки, бизнес-исключения и блокировки.**
-6. Нет реализации чтения из Loki/облаков, потоковых адаптеров, готовых облачных правил мониторинга, Investigation Engine и Reaction Runtime.
+6. Реализован первый вертикальный срез чтения исторических событий из Loki в модуле `loki-query` (Loki HTTP range query клиент, LogQL builder с защитой от high-cardinality label abuse, парсер структурированного вывода и модель полноты выборки, CLI-пример). Облачные адаптеры (CloudWatch/Azure/GCP), потоковые адаптеры, облачные правила мониторинга, Investigation Engine и Reaction Runtime пока не реализованы.
 7. `CallContextManager` и MDC используют контекст текущего потока (`ThreadLocal`/SLF4J MDC); автоматический перенос контекста на другой поток или в coroutine/async execution не гарантирован.
 8. Текущий `Store` предоставляет точечные операции `get`/`set`/`inc` и CAS-подобный условный `set`, но не предоставляет API перечисления шагов, попыток, суффиксов или истории операции. Ключи исполнения формируются внутри `ContextImpl`. Чтение persisted output может потребовать доменных классов приложения. Существующий `ProcessSupervisor` может вычислить состояние по `StateConfig`, не отдавая пользовательские payload'ы, но требует классы доменной модели (`Class<S>` и `Class<STATE>`) и проверяет факты для **конкретных** `attempt` и `suffix`. Он не является универсальным API инспекции истории.
 9. `step.exception` намеренно раскрывает только имя класса исключения. Сообщение, stack trace и причинная связь с внешним API могут быть доступны лишь в логах/трассировках хоста при условии корректной корреляции.
@@ -311,9 +311,7 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 
 ## 15. Ссылки
 
-**Документация Core:** ссылки в [`docs/logging.md`](logging.md) на `../core/src/main/...` актуализированы после переноса исходников в `core/`.
-
-**Внутренние:** [`logging.md`](logging.md), [`../pom.xml`](../pom.xml), [`../core/pom.xml`](../core/pom.xml), [`../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt`](../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt), [`../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt`](../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt).
+**Документация и срезы:** [`logging.md`](logging.md), [`loki-query-design-note.md`](loki-query-design-note.md), [`../pom.xml`](../pom.xml), [`../core/pom.xml`](../core/pom.xml), [`../loki-query/pom.xml`](../loki-query/pom.xml), [`../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt`](../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt), [`../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt`](../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt).
 
 **Внешние — только справка по возможностям платформ (не требования к реализации):**
 
