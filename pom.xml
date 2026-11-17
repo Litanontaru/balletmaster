@@ -13,7 +13,9 @@
 
     <modules>
         <module>core</module>
+        <module>observation-model</module>
         <module>loki-query</module>
+        <module>investigation-engine</module>
     </modules>
 
     <properties>
@@ -41,6 +43,21 @@
             <dependency>
                 <groupId>org.example</groupId>
                 <artifactId>core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.example</groupId>
+                <artifactId>observation-model</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.example</groupId>
+                <artifactId>loki-query</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.example</groupId>
+                <artifactId>investigation-engine</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

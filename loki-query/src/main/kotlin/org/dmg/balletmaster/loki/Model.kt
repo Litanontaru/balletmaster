@@ -3,31 +3,9 @@ package org.dmg.balletmaster.loki
 import java.io.Serializable
 import java.time.Instant
 
-/**
- * Normalized correlation attributes corresponding to Balletmaster's unified MDC and KeyValuePair dictionary.
- */
-data class BalletCorrelation(
-    val operation: String? = null,
-    val operationId: String? = null,
-    val attempt: Int? = null,
-    val suffix: String? = null,
-    val step: String? = null,
-    val replay: Boolean? = null
-) : Serializable
+typealias BalletCorrelation = org.dmg.balletmaster.observation.BalletCorrelation
 
-/**
- * Diagnostic indicator of historical query result completeness.
- */
-enum class Completeness {
-    /** All matching log entries in the time window were retrieved. */
-    COMPLETE,
-
-    /** Result was truncated due to budget constraints (page count, total entries, or nanosecond collision overflow). */
-    TRUNCATED,
-
-    /** Entries were retrieved, but one or more records failed structured JSON parsing. */
-    PARTIAL_PARSE_ERRORS
-}
+typealias Completeness = org.dmg.balletmaster.observation.Completeness
 
 /**
  * Normalized log record extracted from Loki stream output.
