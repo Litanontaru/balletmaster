@@ -1,11 +1,6 @@
 package org.dmg.balletmaster.loki.cli
 
-import org.dmg.balletmaster.loki.BalletCorrelation
-import org.dmg.balletmaster.loki.LogQlQueryBuilder
-import org.dmg.balletmaster.loki.LogScope
-import org.dmg.balletmaster.loki.LokiClientConfig
-import org.dmg.balletmaster.loki.LokiLogObservation
-import org.dmg.balletmaster.loki.LokiQueryClient
+import org.dmg.balletmaster.loki.*
 import java.net.URI
 import java.time.Duration
 import java.time.Instant

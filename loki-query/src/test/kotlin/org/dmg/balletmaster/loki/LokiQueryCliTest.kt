@@ -20,13 +20,13 @@ class LokiQueryCliTest {
     fun setUp() {
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         port = server.address.port
-        server.createContext("/loki/api/v1/query_range", HttpHandler { exchange: HttpExchange ->
+        server.createContext("/loki/api/v1/query_range") { exchange: HttpExchange ->
             val json = """{"status":"success","data":{"resultType":"streams","result":[]}}"""
             val bytes = json.toByteArray(StandardCharsets.UTF_8)
             exchange.responseHeaders.set("Content-Type", "application/json")
             exchange.sendResponseHeaders(200, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
-        })
+        }
         server.start()
     }
 

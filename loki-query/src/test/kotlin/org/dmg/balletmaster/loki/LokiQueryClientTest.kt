@@ -25,7 +25,7 @@ class LokiQueryClientTest {
     fun setUp() {
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         port = server.address.port
-        server.createContext("/loki/api/v1/query_range", HttpHandler { exchange ->
+        server.createContext("/loki/api/v1/query_range") { exchange ->
             try {
                 handler(exchange)
             } catch (e: Exception) {
@@ -34,7 +34,7 @@ class LokiQueryClientTest {
                 exchange.responseBody.write(err)
                 exchange.close()
             }
-        })
+        }
         server.start()
     }
 
