@@ -4,7 +4,7 @@ groups:
       - alert: BalletmasterNoCallDetected
         expr: |
           sum by (app, environment, ballet_step) (
-            rate({app=~".+"} |= "step.no_call" [5m])
+            rate({app=~".+"} |= "step.no_call" | json [5m])
           ) > 0
         for: 1m
         labels:
@@ -18,7 +18,7 @@ groups:
       - alert: BalletmasterStoreErrorsHigh
         expr: |
           sum by (app, environment, storeOp) (
-            rate({app=~".+"} |= "store.error" [5m])
+            rate({app=~".+"} |= "store.error" | json [5m])
           ) > 0.05
         for: 2m
         labels:
@@ -32,7 +32,7 @@ groups:
       - alert: BalletmasterLeaseTakeoverDetected
         expr: |
           sum by (app, environment, ballet_operation, ballet_step) (
-            rate({app=~".+"} |= "lock.stolen_expired" [10m])
+            rate({app=~".+"} |= "lock.stolen_expired" | json [10m])
           ) > 0
         for: 2m
         labels:
@@ -46,7 +46,7 @@ groups:
       - alert: BalletmasterStepFailureRateSpike
         expr: |
           sum by (app, environment, ballet_step, exception) (
-            rate({app=~".+"} |= "step.exception" [5m])
+            rate({app=~".+"} |= "step.exception" | json [5m])
           ) > 0.2
         for: 3m
         labels:

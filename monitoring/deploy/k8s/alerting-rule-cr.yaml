@@ -1,0 +1,69 @@
+apiVersion: loki.grafana.com/v1
+kind: AlertingRule
+metadata:
+  name: balletmaster-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: balletmaster-alerts
+    app.kubernetes.io/part-of: balletmaster
+    app.kubernetes.io/component: observability
+spec:
+  groups:
+    - name: balletmaster-alerts
+      interval: 1m
+      rules:
+        - alert: BalletmasterNoCallDetected
+          expr: |
+            sum by (app, environment, ballet_step) (
+              rate({app=~".+"} |= "step.no_call" | json [5m])
+            ) > 0
+          for: 1m
+          labels:
+            severity: critical
+            subsystem: balletmaster
+          annotations:
+            summary: "Balletmaster execution called without active CallContext"
+            description: "Application '{{ $labels.app }}' ({{ $labels.environment }}) executed step '{{ $labels.ballet_step }}' with NO_CALL status. CallContextManager was not initialized prior to chain execution."
+            runbook_url: "https://github.com/dmg-org/balletmaster/blob/main/docs/logging.md#step-no-call"
+
+        - alert: BalletmasterStoreErrorsHigh
+          expr: |
+            sum by (app, environment, storeOp) (
+              rate({app=~".+"} |= "store.error" | json [5m])
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            subsystem: balletmaster
+          annotations:
+            summary: "High rate of Balletmaster Store infrastructure errors"
+            description: "Application '{{ $labels.app }}' is encountering persistent Store failures during operation '{{ $labels.storeOp }}'. Investigate database/cache connectivity and health."
+            runbook_url: "https://github.com/dmg-org/balletmaster/blob/main/docs/logging.md#store-error"
+
+        - alert: BalletmasterLeaseTakeoverDetected
+          expr: |
+            sum by (app, environment, ballet_operation, ballet_step) (
+              rate({app=~".+"} |= "lock.stolen_expired" | json [10m])
+            ) > 0
+          for: 2m
+          labels:
+            severity: warning
+            subsystem: balletmaster
+          annotations:
+            summary: "Balletmaster step lease expired and was overtaken by another worker"
+            description: "Step '{{ $labels.ballet_step }}' in operation '{{ $labels.ballet_operation }}' exceeded its configured lease time. Review step execution latency, GC pauses, or increase step lease."
+            runbook_url: "https://github.com/dmg-org/balletmaster/blob/main/docs/logging.md#lock-stolen-expired"
+
+        - alert: BalletmasterStepFailureRateSpike
+          expr: |
+            sum by (app, environment, ballet_step, exception) (
+              rate({app=~".+"} |= "step.exception" | json [5m])
+            ) > 0.2
+          for: 3m
+          labels:
+            severity: warning
+            subsystem: balletmaster
+          annotations:
+            summary: "Spike in business step exceptions in Balletmaster"
+            description: "Step '{{ $labels.ballet_step }}' in '{{ $labels.app }}' is failing with exception '{{ $labels.exception }}' at an elevated rate (>0.2/sec over 5m)."
+            runbook_url: "https://github.com/dmg-org/balletmaster/blob/main/docs/logging.md#step-exception"

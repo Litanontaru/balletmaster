@@ -29,15 +29,20 @@ class LokiRulesValidationTest {
         "executionId"
     )
 
-    @Test
-    fun validatesRuleFileSyntaxAndSafety() {
+    private fun resolveMonitoringFile(relativePath: String): File {
         val candidates = listOf(
-            File("../monitoring/rules/loki/balletmaster-loki-rules.yaml"),
-            File("monitoring/rules/loki/balletmaster-loki-rules.yaml")
+            File("../monitoring/$relativePath"),
+            File("monitoring/$relativePath")
         )
         val file = candidates.firstOrNull { it.exists() }
-        assertNotNull(file, "Rule file not found in candidates: $candidates")
-        assertTrue(file!!.length() > 0, "Rule file must not be empty")
+        assertNotNull(file, "Monitoring file not found in candidates: $candidates")
+        assertTrue(file!!.length() > 0, "Monitoring file must not be empty: $file")
+        return file
+    }
+
+    @Test
+    fun validatesRuleFileSyntaxAndSafety() {
+        val file = resolveMonitoringFile("rules/loki/balletmaster-loki-rules.yaml")
 
         val rules = parseAlertRules(file.readText())
         assertTrue(rules.size >= 4, "Expected at least 4 rules, got ${rules.size}")
@@ -80,6 +85,37 @@ class LokiRulesValidationTest {
             val matchedEvent = expectedKnownEvents.firstOrNull { rule.expr.contains("|= \"$it\"") }
             assertNotNull(matchedEvent, "Rule '${rule.alert}' expression '${rule.expr}' must reference a known SDK event")
         }
+    }
+
+    @Test
+    fun validatesGitOpsKubernetesManifestsAndParityWithCanonicalRules() {
+        val canonicalFile = resolveMonitoringFile("rules/loki/balletmaster-loki-rules.yaml")
+        val canonicalRules = parseAlertRules(canonicalFile.readText())
+
+        // 1. Loki Operator AlertingRule CR
+        val crFile = resolveMonitoringFile("deploy/k8s/alerting-rule-cr.yaml")
+        val crText = crFile.readText()
+        assertTrue(crText.contains("apiVersion: loki.grafana.com/v1"), "AlertingRule CR must use loki.grafana.com/v1")
+        assertTrue(crText.contains("kind: AlertingRule"), "AlertingRule CR must declare kind: AlertingRule")
+        assertEquals(canonicalRules, parseAlertRules(crText), "AlertingRule CR rules must stay in sync with canonical rule file")
+
+        // 2. Static ConfigMap
+        val cmFile = resolveMonitoringFile("deploy/k8s/configmap.yaml")
+        val cmText = cmFile.readText()
+        assertTrue(cmText.contains("apiVersion: v1"), "ConfigMap must use apiVersion: v1")
+        assertTrue(cmText.contains("kind: ConfigMap"), "ConfigMap must declare kind: ConfigMap")
+        assertTrue(cmText.contains("balletmaster-loki-rules.yaml: |"), "ConfigMap must embed balletmaster-loki-rules.yaml")
+        assertEquals(canonicalRules, parseAlertRules(cmText), "ConfigMap rules must stay in sync with canonical rule file")
+
+        // 3. Kustomize base
+        val kustomizeFile = resolveMonitoringFile("deploy/k8s/kustomization.yaml")
+        val kustomizeText = kustomizeFile.readText()
+        assertTrue(kustomizeText.contains("apiVersion: kustomize.config.k8s.io/v1beta1"))
+        assertTrue(kustomizeText.contains("kind: Kustomization"))
+        val expectedRef = "../../rules/loki/balletmaster-loki-rules.yaml"
+        assertTrue(kustomizeText.contains(expectedRef), "Kustomization must reference canonical file $expectedRef")
+        val resolvedFromKustomize = File(kustomizeFile.parentFile, expectedRef).canonicalFile
+        assertEquals(canonicalFile.canonicalFile, resolvedFromKustomize)
     }
 
     private data class ParsedRule(

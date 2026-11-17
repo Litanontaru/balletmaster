@@ -26,8 +26,11 @@
 
 По [п. 5.4 диздока](balletmaster-observability-design-v0.3.md): *«Не каждый артефакт обязан быть JAR: конфигурации, правила и примеры развёртывания также являются поставляемыми компонентами.»*
 
-- **Формат поставки:** стандартный YAML-манифест группы правил Loki Ruler / Prometheus (`rule_files`).
-- **Путь в репозитории:** [`monitoring/rules/loki/balletmaster-loki-rules.yaml`](../monitoring/rules/loki/balletmaster-loki-rules.yaml).
+- **Формат поставки:** стандартный YAML-манифест группы правил Loki Ruler / Prometheus (`rule_files`) + готовые GitOps-манифесты Kubernetes.
+- **Пути в репозитории:**
+  - канонические правила: [`monitoring/rules/loki/balletmaster-loki-rules.yaml`](../monitoring/rules/loki/balletmaster-loki-rules.yaml);
+  - GitOps/K8s-шаблоны: [`monitoring/deploy/k8s/kustomization.yaml`](../monitoring/deploy/k8s/kustomization.yaml), [`monitoring/deploy/k8s/alerting-rule-cr.yaml`](../monitoring/deploy/k8s/alerting-rule-cr.yaml) (`loki.grafana.com/v1 AlertingRule`), [`monitoring/deploy/k8s/configmap.yaml`](../monitoring/deploy/k8s/configmap.yaml);
+  - инструкция для SRE: [`monitoring/README.md`](../monitoring/README.md).
 - **Совместимость:**
   - Loki Ruler (штатный сервис агрегации и вычисления алертов в Grafana Loki).
   - Grafana 9/10/11 Unified Alerting (файловый provisioning правил).
