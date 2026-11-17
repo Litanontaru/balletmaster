@@ -174,15 +174,15 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 | `core` | Исполнение и публикация системных событий | JVM JAR | Реализовано |
 | Observation/Event Model | Нормализованный контракт событий, корреляция, provenance | JVM library / schema | Рабочая гипотеза |
 | Query API | Запрос исторических событий, лимиты и полнота выборки; общность разных провайдеров пока не доказана | Возможно JVM library, возможно provider-specific | Рабочая гипотеза |
-| Loki Query Adapter | LogQL / Loki HTTP API, декодирование ответа | JVM JAR | Кандидат первого адаптера |
+| Loki Query Adapter | LogQL / Loki HTTP API, декодирование ответа | JVM JAR (`loki-query`) | Реализовано |
 | Cloud Query Adapters | CloudWatch / Azure Monitor / GCP Logging | Отдельный JAR на сервис | Позже |
-| Native Rule Packs | Запросы и правила алертов для каждой платформы | YAML/JSON/конфигурации | Отдельная ветка |
+| Native Rule Packs | Запросы и правила алертов для каждой платформы | YAML/JSON/конфигурации (`monitoring/rules/loki/`) | Реализовано (Loki Ruler) |
 | Stream Ingestion Adapters | Приём из Kafka/Kinesis/Event Hubs/PubSub | Отдельные JAR/runtime-адаптеры | Позже |
 | Optional Telemetry Sink / Metrics SPI | Возможный независимый от логов путь передачи ограниченных наблюдений | Контракт в Core + внешние адаптеры, **только если выбран** | Открытый вопрос |
 | Stream Analysis | Корреляция по времени и состоянию множества операций | JVM library + runtime | Позже |
 | Investigation Engine | Правила диагностики и отчёт с evidence | JVM library | После проверки Query |
 | Reaction Integration | Передача finding/alert в код хоста | library/webhook/function integration | Позже |
-| Example Runtime | Интеграционный proof-of-concept, CLI или job | Исполняемый example | Для вертикального MVP |
+| Example Runtime | Интеграционный proof-of-concept, CLI или job | Исполняемый example (`LokiQueryCli`) | Реализовано |
 
 Названия условны; **не создавать все артефакты заранее**. Предпочтительная форма: маленькие модули без навязанных зависимостей на Spring, облачный runtime или конкретное хранилище, если эти зависимости не нужны для их ответственности.
 
@@ -311,7 +311,7 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 
 ## 15. Ссылки
 
-**Документация и срезы:** [`logging.md`](logging.md), [`loki-query-design-note.md`](loki-query-design-note.md), [`../pom.xml`](../pom.xml), [`../core/pom.xml`](../core/pom.xml), [`../loki-query/pom.xml`](../loki-query/pom.xml), [`../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt`](../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt), [`../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt`](../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt).
+**Документация и срезы:** [`logging.md`](logging.md), [`loki-query-design-note.md`](loki-query-design-note.md), [`loki-alerting-design-note.md`](loki-alerting-design-note.md), [`../monitoring/rules/loki/balletmaster-loki-rules.yaml`](../monitoring/rules/loki/balletmaster-loki-rules.yaml), [`../pom.xml`](../pom.xml), [`../core/pom.xml`](../core/pom.xml), [`../loki-query/pom.xml`](../loki-query/pom.xml), [`../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt`](../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt), [`../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt`](../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt).
 
 **Внешние — только справка по возможностям платформ (не требования к реализации):**
 
