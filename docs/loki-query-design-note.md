@@ -50,7 +50,7 @@
 `core` пишет атрибуты через SLF4J 2.0 `LoggingEventBuilder.addKeyValue(...)` (`message` = имя события), а также устанавливает `MDC` (`ballet.*`) на время шага/цепочки.
 
 - **Почему JSON, а не текстовый `%kvp`:** текстовый `%kvp` удобен для локальной консоли, но уязвим при парсинге в LogQL (разные форматы строк у логов хоста и SDK, экранирование значений). Для Loki-интеграции требуется **JSON-формат строки**.
-- **Базовый рекомендуемый энкодер для примера и round-trip тестов:** встроенный `ch.qos.logback.classic.encoder.JsonEncoder` (входит в `logback-classic:1.5.12`, уже прописанный в корневом [`pom.xml`](../pom.xml)), не требующий дополнительных библиотек.
+- **Базовый рекомендуемый энкодер для примера и round-trip тестов:** встроенный `ch.qos.logback.classic.encoder.JsonEncoder` (входит в `logback-classic:1.6.7`, уже прописанный в корневом [`pom.xml`](../pom.xml)), не требующий дополнительных библиотек.
 - **Особенности форматов (что обязан учитывать парсер):**
   - Logback `JsonEncoder` сериализует `kvpList` / `keyValuePairs` как список `{ "key": "...", "value": ... }`, а `MDC` — как объект `"mdc": { "ballet.operation": "...", ... }`.
   - Альтернативные энкодеры (например, `logstash-logback-encoder` или collector-трансформация) могут раскладывать `keyValuePairs` и `MDC` в плоские поля JSON или Loki structured metadata.
