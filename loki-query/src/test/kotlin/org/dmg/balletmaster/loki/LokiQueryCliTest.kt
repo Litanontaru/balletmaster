@@ -1,7 +1,6 @@
 package org.dmg.balletmaster.loki
 
 import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import org.dmg.balletmaster.loki.cli.LokiQueryCli
 import org.junit.jupiter.api.AfterEach
