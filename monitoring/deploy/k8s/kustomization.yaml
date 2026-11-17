@@ -3,9 +3,10 @@ kind: Kustomization
 
 # Kustomize-база для GitOps (ArgoCD / Flux): генерирует ConfigMap напрямую
 # из единственного источника истины — monitoring/rules/loki/balletmaster-loki-rules.yaml.
-commonLabels:
-  app.kubernetes.io/part-of: balletmaster
-  app.kubernetes.io/component: observability
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: balletmaster
+      app.kubernetes.io/component: observability
 
 configMapGenerator:
   - name: balletmaster-loki-rules
