@@ -7,7 +7,6 @@ import ch.qos.logback.classic.encoder.JsonEncoder
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.OutputStreamAppender
 import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import org.dmg.balletmaster.BalletMaster
 import org.dmg.balletmaster.StepId
@@ -59,7 +58,7 @@ class InvestigationEndToEndTest {
     fun setUp() {
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         port = server.address.port
-        server.createContext("/loki/api/v1/query_range", HttpHandler { ex -> handler(ex) })
+        server.createContext("/loki/api/v1/query_range") { ex -> handler(ex) }
         server.start()
 
         loggerContext = LoggerFactory.getILoggerFactory() as LoggerContext

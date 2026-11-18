@@ -1,16 +1,13 @@
 package org.dmg.balletmaster.loki
 
 import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import org.dmg.balletmaster.observation.Completeness
 import org.dmg.balletmaster.observation.ObservationScope
 import org.dmg.balletmaster.observation.ObservationSourceException
 import org.dmg.balletmaster.observation.OperationQuery
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
@@ -28,7 +25,7 @@ class LokiOperationObservationSourceTest {
     fun setUp() {
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         port = server.address.port
-        server.createContext("/loki/api/v1/query_range", HttpHandler { ex -> handler(ex) })
+        server.createContext("/loki/api/v1/query_range") { ex -> handler(ex) }
         server.start()
     }
 

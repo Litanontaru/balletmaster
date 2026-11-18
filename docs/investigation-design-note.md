@@ -29,7 +29,7 @@
            └──────────────┬──────────────────┘
                           │ DI, конфиг, REST API
                 ┌─────────┴──────────────┐
-                │  investigation-service │  (Spring Boot 3.5.16)
+                │  investigation-service │  (Spring Boot 4.1.2)
                 └────────────────────────┘
 ```
 
@@ -60,8 +60,8 @@
      - `OperationInvestigator(source: OperationObservationSource, analyzer: ObservationAnalyzer)` — оркестратор `investigate(query: OperationQuery): InvestigationReport`.
 
 4. **`investigation-service`** (`org.example:investigation-service`):
-   - **Стек:** **Spring Boot `3.5.16`** (совместим с нашим Jackson 2 `com.fasterxml.jackson.*` `2.22.4` и Java 21 без конфликта с Jackson 3 из Boot 4) + `spring-boot-starter-web` + `spring-boot-starter-actuator`.
-   - **Безопасность зависимостей:** корневой `pom.xml` закрепляет `logback:1.6.7`, `jackson:2.22.4` и `kotlin:2.4.21` приоритетнее импортируемого Spring Boot BOM.
+   - **Стек:** **Spring Boot `4.1.2`** (`spring-boot-starter-webmvc`, `spring-boot-starter-actuator`, `tools.jackson.module:jackson-module-kotlin`). Поскольку `observation-model` и `investigation-engine` свободны от Jackson-аннотаций, Jackson 3 (`tools.jackson.*`) в Spring Boot 4 сосуществует с Jackson 2 (`com.fasterxml.jackson.*` `2.22.4`) внутри `loki-query` без конфликта пространств имён.
+   - **Безопасность зависимостей:** актуальная ветка `4.1.2` закрывает уязвимости EOL-ветки `3.5.x` (`spring-web`, `tomcat-embed`, `micrometer`, `log4j-api`), а `dependencyManagement` закрепляет `logback:1.6.7`, `jackson:2.22.4` и `kotlin:2.4.21`.
    - **Конфигурируемость провайдера:** бин `OperationObservationSource` подключается через конфиг (`balletmaster.investigation.provider=loki`, `balletmaster.investigation.loki.*`). В будущем добавление CloudWatch / OpenSearch сводится к подключению нового адаптера без правок в `investigation-engine` и REST-контроллере.
 
 ---
@@ -133,5 +133,5 @@
    - Адаптировать `loki-query` к `observation-model` (`LokiOperationObservationSource`);
    - Создать `investigation-engine` (`ObservationAnalyzer`, `OperationInvestigator`) и покрыть юнит-тестами все классы `Finding` + сквозной тест `BalletMaster → Logback JSON → LokiOperationObservationSource → OperationInvestigator`.
 2. **Этап B (самостоятельный Spring Boot микросервис):**
-   - Создать `investigation-service` на Spring Boot `3.5.16` (`InvestigationController`, `InvestigationProperties`, конфигурация провайдера `loki`, `GlobalExceptionHandler`, `application.yml`);
+   - Создать `investigation-service` на Spring Boot `4.1.2` (`InvestigationController`, `InvestigationProperties`, конфигурация провайдера `loki`, `ApiExceptionHandler`, `application.yml`);
    - Добавить интеграционные тесты (`@SpringBootTest` + `MockMvc` с фейковым `OperationObservationSource` и end-to-end тест против локального `HttpServer`).

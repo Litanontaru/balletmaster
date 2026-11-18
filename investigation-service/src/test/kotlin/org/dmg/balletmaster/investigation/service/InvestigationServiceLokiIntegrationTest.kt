@@ -1,13 +1,11 @@
 package org.dmg.balletmaster.investigation.service
 
 import ch.qos.logback.classic.Level
-import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.encoder.JsonEncoder
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.OutputStreamAppender
 import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import org.dmg.balletmaster.BalletMaster
 import org.dmg.balletmaster.StepId
@@ -20,8 +18,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.MockMvc
@@ -48,7 +46,7 @@ class InvestigationServiceLokiIntegrationTest {
 
     companion object {
         private val lokiServer: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
-            createContext("/loki/api/v1/query_range", HttpHandler { ex -> currentHandler(ex) })
+            createContext("/loki/api/v1/query_range") { ex -> currentHandler(ex) }
             start()
         }
 
