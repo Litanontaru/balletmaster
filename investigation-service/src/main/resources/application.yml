@@ -1,5 +1,10 @@
 server:
   port: 8080
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
 
 management:
   endpoints:
@@ -10,11 +15,23 @@ management:
     health:
       probes:
         enabled: true
+      show-details: never
 
 balletmaster:
   investigation:
     provider: loki
     default-window-minutes: 60
+    security:
+      # Fail-closed by default: explicitly configure allowed apps and environments in production.
+      allowed-apps: []
+      allowed-environments: []
+      allow-unrestricted-targets: false
+      allow-all-correlated: false
+      max-window: 6h
+      max-concurrent-queries: 10
+      max-parameter-length: 128
+      audit-subject-header: X-Forwarded-User
+      audit-request-id-header: X-Request-Id
     loki:
       base-url: http://localhost:3100
       connect-timeout: 5s

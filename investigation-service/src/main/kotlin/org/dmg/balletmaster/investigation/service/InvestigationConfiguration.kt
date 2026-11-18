@@ -45,4 +45,8 @@ class InvestigationConfiguration {
     @Bean
     fun operationInvestigator(source: OperationObservationSource): OperationInvestigator =
         OperationInvestigator(source)
+
+    @Bean
+    fun investigationAccessPolicy(properties: InvestigationProperties): InvestigationAccessPolicy =
+        InvestigationAccessPolicy(properties.security)
 }

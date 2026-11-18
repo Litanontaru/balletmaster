@@ -1,5 +1,8 @@
 package org.dmg.balletmaster.investigation.service
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import org.dmg.balletmaster.observation.BalletCorrelation
 import org.dmg.balletmaster.observation.BalletObservation
 import org.dmg.balletmaster.observation.Completeness
@@ -8,7 +11,10 @@ import org.dmg.balletmaster.observation.ObservationSourceException
 import org.dmg.balletmaster.observation.OperationObservationSource
 import org.dmg.balletmaster.observation.OperationQuery
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
@@ -21,8 +27,19 @@ import org.springframework.test.web.servlet.get
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
-@SpringBootTest
+@SpringBootTest(
+    properties = [
+        "balletmaster.investigation.security.allowed-apps=payments",
+        "balletmaster.investigation.security.allowed-environments=prod",
+        "balletmaster.investigation.security.allow-all-correlated=false",
+        "balletmaster.investigation.security.max-window=6h",
+        "balletmaster.investigation.security.max-concurrent-queries=1"
+    ]
+)
 @AutoConfigureMockMvc
 @Import(InvestigationControllerTest.StubSourceConfig::class)
 class InvestigationControllerTest {
@@ -180,16 +197,16 @@ class InvestigationControllerTest {
     }
 
     @Test
-    fun returnsBadGatewayOnUpstreamObservationSourceFailure() {
+    fun returnsBadGatewayOnUpstreamObservationSourceFailureWithoutLeakingInternalDetails() {
         stubSource.behavior = {
             throw ObservationSourceException(
                 provider = "stub-provider",
-                message = "Upstream Loki unavailable (HTTP 503)",
+                message = "Connection refused to http://internal-loki:3100 with Bearer SECRET_TOKEN_123",
                 statusCode = 503
             )
         }
 
-        mockMvc.get("/api/v1/investigations") {
+        val mvcResult = mockMvc.get("/api/v1/investigations") {
             param("app", "payments")
             param("env", "prod")
             param("operationId", "ord-503")
@@ -197,6 +214,145 @@ class InvestigationControllerTest {
             status { isBadGateway() }
             jsonPath("$.error") { value("UPSTREAM_OBSERVATION_SOURCE_ERROR") }
             jsonPath("$.provider") { value("stub-provider") }
+        }.andReturn()
+
+        val body = mvcResult.response.contentAsString
+        assertFalse(body.contains("internal-loki"))
+        assertFalse(body.contains("SECRET_TOKEN_123"))
+    }
+
+    @Test
+    fun deniesDisallowedAppEnvironmentAndAllCorrelatedScopeWithAuditLog() {
+        val auditLogger = LoggerFactory.getLogger("org.dmg.balletmaster.investigation.audit") as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        auditLogger.addAppender(appender)
+        try {
+            // Disallowed app
+            mockMvc.get("/api/v1/investigations") {
+                param("app", "other-service")
+                param("env", "prod")
+                param("operationId", "ord-1")
+                header("X-Forwarded-User", "alice")
+                header("X-Request-Id", "req-1")
+            }.andExpect {
+                status { isForbidden() }
+                jsonPath("$.error") { value("ACCESS_DENIED") }
+            }
+
+            // Disallowed environment
+            mockMvc.get("/api/v1/investigations") {
+                param("app", "payments")
+                param("env", "staging")
+                param("operationId", "ord-1")
+            }.andExpect {
+                status { isForbidden() }
+                jsonPath("$.error") { value("ACCESS_DENIED") }
+            }
+
+            // Disallowed ALL_CORRELATED scope
+            mockMvc.get("/api/v1/investigations") {
+                param("app", "payments")
+                param("env", "prod")
+                param("operationId", "ord-1")
+                param("scope", "ALL_CORRELATED")
+            }.andExpect {
+                status { isForbidden() }
+                jsonPath("$.error") { value("ACCESS_DENIED") }
+            }
+
+            assertEquals(3, appender.list.size)
+            val firstAttrs = appender.list[0].keyValuePairs.associate { it.key to it.value }
+            assertEquals("DENIED", firstAttrs["outcome"])
+            assertEquals("alice", firstAttrs["subject"])
+            assertEquals("req-1", firstAttrs["requestId"])
+            assertEquals("other-service", firstAttrs["app"])
+        } finally {
+            auditLogger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
+    @Test
+    fun rejectsWindowExceedingServiceMaxWindowAndSanitizesTypeMismatch() {
+        mockMvc.get("/api/v1/investigations") {
+            param("app", "payments")
+            param("env", "prod")
+            param("operationId", "ord-1")
+            param("windowMinutes", "500") // > 6h (360m)
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("INVALID_REQUEST") }
+        }
+
+        val mismatchBody = mockMvc.get("/api/v1/investigations") {
+            param("app", "payments")
+            param("env", "prod")
+            param("operationId", "ord-1")
+            param("scope", "NOT_A_SCOPE")
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("INVALID_REQUEST") }
+        }.andReturn().response.contentAsString
+
+        assertFalse(mismatchBody.contains("org.dmg.balletmaster"))
+    }
+
+    @Test
+    fun enforcesConcurrencyLimitWith429AndReleasesSlotAfterCompletion() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        stubSource.behavior = { q ->
+            entered.countDown()
+            assertTrue(release.await(5, TimeUnit.SECONDS))
+            ObservationBatch(
+                provider = "stub-provider",
+                sourceQuery = "stub:${q.operationId}",
+                observations = emptyList(),
+                completeness = Completeness.COMPLETE
+            )
+        }
+
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val firstFuture = executor.submit {
+                mockMvc.get("/api/v1/investigations") {
+                    param("app", "payments")
+                    param("env", "prod")
+                    param("operationId", "ord-slow")
+                }.andExpect {
+                    status { isOk() }
+                }
+            }
+
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+
+            // Second concurrent request exceeds max-concurrent-queries=1 -> 429
+            mockMvc.get("/api/v1/investigations") {
+                param("app", "payments")
+                param("env", "prod")
+                param("operationId", "ord-second")
+            }.andExpect {
+                status { isTooManyRequests() }
+                jsonPath("$.error") { value("TOO_MANY_REQUESTS") }
+            }
+
+            release.countDown()
+            firstFuture.get(5, TimeUnit.SECONDS)
+
+            // Once first completes, slot is released and subsequent request succeeds
+            stubSource.behavior = { q ->
+                ObservationBatch("stub-provider", "stub:${q.operationId}", emptyList(), Completeness.COMPLETE)
+            }
+            mockMvc.get("/api/v1/investigations") {
+                param("app", "payments")
+                param("env", "prod")
+                param("operationId", "ord-after")
+            }.andExpect {
+                status { isOk() }
+            }
+        } finally {
+            release.countDown()
+            executor.shutdownNow()
         }
     }
 

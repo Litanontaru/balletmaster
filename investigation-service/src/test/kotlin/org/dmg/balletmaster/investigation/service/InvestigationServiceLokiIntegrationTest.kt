@@ -63,6 +63,8 @@ class InvestigationServiceLokiIntegrationTest {
         fun registerLokiProperties(registry: DynamicPropertyRegistry) {
             registry.add("balletmaster.investigation.provider") { "loki" }
             registry.add("balletmaster.investigation.loki.base-url") { "http://127.0.0.1:${lokiServer.address.port}" }
+            registry.add("balletmaster.investigation.security.allowed-apps") { "checkout-service" }
+            registry.add("balletmaster.investigation.security.allowed-environments") { "prod" }
         }
     }
 
