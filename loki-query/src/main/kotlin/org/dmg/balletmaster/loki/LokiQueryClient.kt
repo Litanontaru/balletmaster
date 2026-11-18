@@ -72,7 +72,7 @@ class LokiQueryClient(
         var boundaryTsNs: Long? = null
         val boundarySeenCounts = mutableMapOf<BoundaryKey, Int>()
 
-        while (pagesFetched < config.maxPages && observations.size < config.maxTotalEntries) {
+        while (true) {
             pagesFetched++
             val rawEntries = try {
                 executeSinglePage(
@@ -94,7 +94,7 @@ class LokiQueryClient(
 
             val entries = if (isForward) {
                 rawEntries.sortedWith(
-                    compareBy<RawStreamEntry>(
+                    compareBy(
                         { it.tsNs },
                         { it.rawLine },
                         { canonicalLabelsKey(it.streamLabels) }
@@ -185,12 +185,12 @@ class LokiQueryClient(
             val nextCursorEndNs: Long
             if (isForward) {
                 advanced = (boundaryTsNs == null && pageEdgeTsNs > currentStartNs) ||
-                    (boundaryTsNs != null && pageEdgeTsNs > boundaryTsNs!!)
+                    (boundaryTsNs != null && pageEdgeTsNs > boundaryTsNs)
                 nextCursorEndNs = currentEndNs
             } else {
                 nextCursorEndNs = if (pageEdgeTsNs < Long.MAX_VALUE) pageEdgeTsNs + 1 else pageEdgeTsNs
                 advanced = nextCursorEndNs < currentEndNs &&
-                    (boundaryTsNs == null || pageEdgeTsNs < boundaryTsNs!!)
+                    (boundaryTsNs == null || pageEdgeTsNs < boundaryTsNs)
             }
 
             if (advanced) {
@@ -201,9 +201,9 @@ class LokiQueryClient(
                 }
                 boundaryTsNs = pageEdgeTsNs
                 boundarySeenCounts.clear()
-                for (accepted in acceptedEntries) {
-                    if (accepted.tsNs == pageEdgeTsNs) {
-                        val key = BoundaryKey(accepted.streamLabels, accepted.rawLine)
+                for ((streamLabels, tsNs, rawLine) in acceptedEntries) {
+                    if (tsNs == pageEdgeTsNs) {
+                        val key = BoundaryKey(streamLabels, rawLine)
                         boundarySeenCounts[key] = (boundarySeenCounts[key] ?: 0) + 1
                     }
                 }
@@ -220,9 +220,9 @@ class LokiQueryClient(
                 }
             } else {
                 val cursorRegressed = if (isForward) {
-                    pageEdgeTsNs < currentStartNs || (boundaryTsNs != null && pageEdgeTsNs < boundaryTsNs!!)
+                    pageEdgeTsNs < currentStartNs || (boundaryTsNs != null && pageEdgeTsNs < boundaryTsNs)
                 } else {
-                    (boundaryTsNs != null && pageEdgeTsNs > boundaryTsNs!!) || nextCursorEndNs > currentEndNs
+                    (boundaryTsNs != null && pageEdgeTsNs > boundaryTsNs) || nextCursorEndNs > currentEndNs
                 }
                 if (cursorRegressed) {
                     completeness = Completeness.TRUNCATED
@@ -232,13 +232,10 @@ class LokiQueryClient(
 
                 if (boundaryTsNs == null) {
                     boundaryTsNs = pageEdgeTsNs
-                    if (!isForward && nextCursorEndNs < currentEndNs) {
-                        currentEndNs = nextCursorEndNs
-                    }
                 }
-                for (accepted in acceptedEntries) {
-                    if (accepted.tsNs == boundaryTsNs) {
-                        val key = BoundaryKey(accepted.streamLabels, accepted.rawLine)
+                for ((streamLabels, tsNs, rawLine) in acceptedEntries) {
+                    if (tsNs == boundaryTsNs) {
+                        val key = BoundaryKey(streamLabels, rawLine)
                         boundarySeenCounts[key] = (boundarySeenCounts[key] ?: 0) + 1
                     }
                 }
