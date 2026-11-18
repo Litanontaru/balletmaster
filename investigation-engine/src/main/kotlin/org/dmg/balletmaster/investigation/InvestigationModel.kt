@@ -33,6 +33,37 @@ enum class FindingSeverity(val rank: Int) {
     INFO(1)
 }
 
+/**
+ * Epistemic classification of a [Finding].
+ *
+ * Log-based investigation can only produce observed log signals, correlated diagnostic
+ * hypotheses, or inconclusive results. Authoritative execution facts must always be
+ * verified directly in the Store.
+ */
+enum class FindingKind {
+    /** Direct observation of a single SDK log signal type without cross-event causal claims. */
+    OBSERVED_SIGNAL,
+
+    /**
+     * Multi-event diagnostic hypothesis grouped by available SDK correlation keys
+     * (operation, operationId, attempt, suffix, step). Because Core does not emit a unique
+     * per-execution executionId, correlation does not prove single-execution causality.
+     */
+    CORRELATED_HYPOTHESIS,
+
+    /** Insufficient or unparseable observational evidence to reach a conclusion. */
+    INCONCLUSIVE
+}
+
+/**
+ * Diagnostic confidence of a [Finding] based on signal directness and correlation completeness.
+ *
+ * - [HIGH]: Direct unambiguous SDK signal (or primary signal with correlated stop) carrying complete
+ *   correlation keys; still observational and not an authoritative Store fact.
+ * - [MEDIUM]: Cross-event hypothesis without executionId proof (such as [FindingType.LEASE_EXPIRY_RACE])
+ *   or indirect stop-only signal with complete correlation keys.
+ * - [LOW]: Unpaired partial race signal, incomplete correlation keys, unparsed entries, or empty batch.
+ */
 enum class Confidence {
     HIGH,
     MEDIUM,
@@ -46,7 +77,11 @@ data class EvidenceRef(
     val level: String?,
     val logger: String?,
     val step: String?,
-    val attributes: Map<String, Any?> = emptyMap()
+    val attributes: Map<String, Any?> = emptyMap(),
+    val operation: String? = null,
+    val operationId: String? = null,
+    val attempt: Int? = null,
+    val suffix: String? = null
 ) : Serializable
 
 data class Finding(
@@ -58,7 +93,11 @@ data class Finding(
     val operation: String? = null,
     val step: String? = null,
     val attempt: Int? = null,
-    val evidence: List<EvidenceRef> = emptyList()
+    val evidence: List<EvidenceRef> = emptyList(),
+    val suffix: String? = null,
+    val operationId: String? = null,
+    val kind: FindingKind = FindingKind.OBSERVED_SIGNAL,
+    val correlationComplete: Boolean = false
 ) : Serializable
 
 data class InvestigationReport(

@@ -236,8 +236,12 @@ class InvestigationEndToEndTest {
 
         assertEquals(InvestigationStatus.MIXED_ANOMALIES, report.summaryStatus)
         val leaseFinding = report.findings.first { it.type == FindingType.LEASE_EXPIRY_RACE }
-        assertEquals(Confidence.HIGH, leaseFinding.confidence)
+        assertEquals(FindingKind.CORRELATED_HYPOTHESIS, leaseFinding.kind)
+        assertEquals(Confidence.MEDIUM, leaseFinding.confidence)
+        assertTrue(leaseFinding.correlationComplete)
         assertEquals("CAPTURE_PAYMENT", leaseFinding.step)
+        assertEquals(0, leaseFinding.attempt)
+        assertEquals("", leaseFinding.suffix)
         assertTrue(report.findings.any { it.type == FindingType.LOCK_CONTENTION_BLOCKED })
     }
 }
