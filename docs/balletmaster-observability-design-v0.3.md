@@ -29,12 +29,12 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 
 ## 3. Текущее состояние (реализовано)
 
-1. Репозиторий использует **multi-module Maven**: корневой `pom.xml` (`packaging=pom`), рабочий модуль ядра `core/` и библиотечный адаптер первого среза `loki-query/`. Координаты — `org.example:ballet-master:1.0-SNAPSHOT`, артефакты — `core` и `loki-query`.
+1. Репозиторий использует **multi-module Maven**: корневой `pom.xml` (`packaging=pom`) и модули `core/`, `observation-model/`, `loki-query/`, `investigation-engine/`, `investigation-service/`, плюс GitOps-манифесты алертинга в `monitoring/`. Координаты — `org.example:ballet-master:1.0-SNAPSHOT`.
 2. В `core` находятся `Step`, `ContextImpl`, `CallContextManager`, `Try`, API `Store`, `InMemoryStore`, Replay, Lease, StateConfig и `ProcessSupervisor`.
 3. Системное логирование использует **SLF4J 2.0 Fluent API** (`addKeyValue`) и MDC; backend и формат вывода настраивает приложение-хост. **Сам SDK не гарантирует JSON в выходном потоке.**
 4. Есть категории `step`, `lock`, `replay`, `store`, `state`, фиксированный каталог событий и корреляционные поля `ballet.operation`, `ballet.operationId`, `ballet.attempt`, `ballet.suffix`, `ballet.step`, `ballet.replay`.
 5. Основные события жизненного цикла на каждый шаг (`step.started`, `step.completed`, `step.skipped_gate`, `step.skipped_idempotent`, `chain.stopped` с `status=SKIP`) — **DEBUG**; события блокировок (`lock.acquired`, `lock.released`, `lock.contention_wait`) — **TRACE**; значимые неуспехи и блокировки (`step.exception` для `gate`/`map`/`milestone`, `lock.blocked`, `chain.stopped` для `Failure`/`Error`/`BLOCKED`/`NO_CALL`) — **INFO**; аномалии — WARN/ERROR. **Из логов уровня INFO нельзя рассчитывать восстановить полную историю шагов, но видны неуспешные остановки, бизнес-исключения и блокировки.**
-6. Реализован первый вертикальный срез чтения исторических событий из Loki в модуле `loki-query` (Loki HTTP range query клиент, LogQL builder с защитой от high-cardinality label abuse, парсер структурированного вывода и модель полноты выборки, CLI-пример). Облачные адаптеры (CloudWatch/Azure/GCP), потоковые адаптеры, облачные правила мониторинга, Investigation Engine и Reaction Runtime пока не реализованы.
+6. Реализованы: общий контракт наблюдений (`observation-model`), Loki-адаптер (`loki-query` с реализацией `OperationObservationSource` и `LokiQueryCli`), пакет правил и GitOps-манифесты Loki Ruler (`monitoring/`), провайдеро-независимый анализатор (`investigation-engine`) и самостоятельный Spring Boot микросервис (`investigation-service`, синхронный REST API `GET /api/v1/investigations`). Облачные адаптеры (CloudWatch/Azure/GCP), потоковые адаптеры, Alertmanager webhook и Reaction Runtime пока не реализованы.
 7. `CallContextManager` и MDC используют контекст текущего потока (`ThreadLocal`/SLF4J MDC); автоматический перенос контекста на другой поток или в coroutine/async execution не гарантирован.
 8. Текущий `Store` предоставляет точечные операции `get`/`set`/`inc` и CAS-подобный условный `set`, но не предоставляет API перечисления шагов, попыток, суффиксов или истории операции. Ключи исполнения формируются внутри `ContextImpl`. Чтение persisted output может потребовать доменных классов приложения. Существующий `ProcessSupervisor` может вычислить состояние по `StateConfig`, не отдавая пользовательские payload'ы, но требует классы доменной модели (`Class<S>` и `Class<STATE>`) и проверяет факты для **конкретных** `attempt` и `suffix`. Он не является универсальным API инспекции истории.
 9. `step.exception` намеренно раскрывает только имя класса исключения. Сообщение, stack trace и причинная связь с внешним API могут быть доступны лишь в логах/трассировках хоста при условии корректной корреляции.
@@ -172,7 +172,7 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 | Логический компонент | Ответственность | Тип поставки | Статус |
 |---|---|---|---|
 | `core` | Исполнение и публикация системных событий | JVM JAR | Реализовано |
-| Observation/Event Model | Нормализованный контракт событий, корреляция, provenance | JVM library / schema | Рабочая гипотеза |
+| Observation/Event Model | Нормализованный контракт событий, корреляция, порт `OperationObservationSource` | JVM JAR (`observation-model`) | Реализовано |
 | Query API | Запрос исторических событий, лимиты и полнота выборки; общность разных провайдеров пока не доказана | Возможно JVM library, возможно provider-specific | Рабочая гипотеза |
 | Loki Query Adapter | LogQL / Loki HTTP API, декодирование ответа | JVM JAR (`loki-query`) | Реализовано |
 | Cloud Query Adapters | CloudWatch / Azure Monitor / GCP Logging | Отдельный JAR на сервис | Позже |
@@ -180,7 +180,8 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 | Stream Ingestion Adapters | Приём из Kafka/Kinesis/Event Hubs/PubSub | Отдельные JAR/runtime-адаптеры | Позже |
 | Optional Telemetry Sink / Metrics SPI | Возможный независимый от логов путь передачи ограниченных наблюдений | Контракт в Core + внешние адаптеры, **только если выбран** | Открытый вопрос |
 | Stream Analysis | Корреляция по времени и состоянию множества операций | JVM library + runtime | Позже |
-| Investigation Engine | Правила диагностики и отчёт с evidence | JVM library | После проверки Query |
+| Investigation Engine | Провайдеро-независимые правила диагностики и `InvestigationReport` с `evidence` | JVM JAR (`investigation-engine`) | Реализовано |
+| Investigation Service | Самостоятельный Spring Boot ops-микросервис (синхронный REST API v1) | Spring Boot JAR (`investigation-service`) | Реализовано |
 | Reaction Integration | Передача finding/alert в код хоста | library/webhook/function integration | Позже |
 | Example Runtime | Интеграционный proof-of-concept, CLI или job | Исполняемый example (`LokiQueryCli`) | Реализовано |
 
@@ -311,7 +312,7 @@ Balletmaster — встраиваемый Kotlin/JVM SDK для исполнен
 
 ## 15. Ссылки
 
-**Документация и срезы:** [`logging.md`](logging.md), [`loki-query-design-note.md`](loki-query-design-note.md), [`loki-alerting-design-note.md`](loki-alerting-design-note.md), [`../monitoring/rules/loki/balletmaster-loki-rules.yaml`](../monitoring/rules/loki/balletmaster-loki-rules.yaml), [`../pom.xml`](../pom.xml), [`../core/pom.xml`](../core/pom.xml), [`../loki-query/pom.xml`](../loki-query/pom.xml), [`../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt`](../core/src/main/kotlin/org/dmg/balletmaster/logging/BalletEvents.kt), [`../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt`](../core/src/main/kotlin/org/dmg/balletmaster/store/Store.kt).
+**Документация и срезы:** [`logging.md`](logging.md), [`loki-query-design-note.md`](loki-query-design-note.md), [`loki-alerting-design-note.md`](loki-alerting-design-note.md), [`investigation-design-note.md`](investigation-design-note.md), [`../monitoring/README.md`](../monitoring/README.md), [`../monitoring/rules/loki/balletmaster-loki-rules.yaml`](../monitoring/rules/loki/balletmaster-loki-rules.yaml), [`../pom.xml`](../pom.xml), [`../core/pom.xml`](../core/pom.xml), [`../observation-model/pom.xml`](../observation-model/pom.xml), [`../loki-query/pom.xml`](../loki-query/pom.xml), [`../investigation-engine/pom.xml`](../investigation-engine/pom.xml), [`../investigation-service/pom.xml`](../investigation-service/pom.xml).
 
 **Внешние — только справка по возможностям платформ (не требования к реализации):**
 

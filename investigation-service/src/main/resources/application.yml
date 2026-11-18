@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+balletmaster:
+  investigation:
+    provider: loki
+    default-window-minutes: 60
+    loki:
+      base-url: http://localhost:3100
+      connect-timeout: 5s
+      request-timeout: 15s
+      max-window: 24h
+      default-page-limit: 500
+      max-total-entries: 5000
+      max-pages: 20
