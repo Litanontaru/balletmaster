@@ -33,6 +33,15 @@ class LokiQueryClient(
         .build()
 ) {
 
+    companion object {
+        private const val MAX_LOKI_LIMIT = 5000
+    }
+
+    private data class BoundaryKey(
+        val streamLabels: Map<String, String>,
+        val rawLine: String
+    )
+
     fun queryRange(
         query: LogQlQuery,
         start: Instant,
@@ -45,7 +54,9 @@ class LokiQueryClient(
         require(window <= config.maxWindow) {
             "Query window of $window exceeds maxWindow limit of ${config.maxWindow}"
         }
-        require(pageLimit in 1..5000) { "pageLimit must be between 1 and 5000 (got $pageLimit)" }
+        require(pageLimit in 1..MAX_LOKI_LIMIT) { "pageLimit must be between 1 and $MAX_LOKI_LIMIT (got $pageLimit)" }
+        require(config.maxPages >= 1) { "maxPages must be >= 1 (got ${config.maxPages})" }
+        require(config.maxTotalEntries >= 1) { "maxTotalEntries must be >= 1 (got ${config.maxTotalEntries})" }
 
         val observations = mutableListOf<LokiLogObservation>()
         var pagesFetched = 0
@@ -54,129 +65,191 @@ class LokiQueryClient(
         var completeness = Completeness.COMPLETE
         var truncationReason: String? = null
 
-        val boundaryDedupKeys = mutableSetOf<String>()
+        val isForward = direction == QueryDirection.FORWARD
+        var currentStartNs = LokiLogParser.instantToNanos(start)
+        var currentEndNs = LokiLogParser.instantToNanos(end)
+        var effectiveLimit = pageLimit
+        var boundaryTsNs: Long? = null
+        val boundarySeenCounts = mutableMapOf<BoundaryKey, Int>()
 
-        if (direction == QueryDirection.FORWARD) {
-            var currentStartNs = LokiLogParser.instantToNanos(start)
-            val targetEndNs = LokiLogParser.instantToNanos(end)
-
-            while (pagesFetched < config.maxPages && observations.size < config.maxTotalEntries) {
-                pagesFetched++
-                val entries = executeSinglePage(
+        while (pagesFetched < config.maxPages && observations.size < config.maxTotalEntries) {
+            pagesFetched++
+            val rawEntries = try {
+                executeSinglePage(
                     query = query.logQl,
                     startNs = currentStartNs,
-                    endNs = targetEndNs,
-                    limit = pageLimit,
-                    direction = direction
-                ).sortedWith(compareBy({ it.tsNs }, { it.rawLine }))
-
-                totalRaw += entries.size
-                if (entries.isEmpty()) {
-                    break
-                }
-
-                for (entry in entries) {
-                    if (entry.tsNs == currentStartNs && entry.dedupKey in boundaryDedupKeys) {
-                        duplicatesDropped++
-                        continue
-                    }
-                    observations += LokiLogParser.parseLine(
-                        rawLine = entry.rawLine,
-                        streamLabels = entry.streamLabels,
-                        defaultTsNs = entry.tsNs
-                    )
-                }
-
-                if (entries.size < pageLimit) {
-                    break
-                }
-
-                if (observations.size >= config.maxTotalEntries) {
-                    completeness = Completeness.TRUNCATED
-                    truncationReason = "MAX_ENTRIES (limit: ${config.maxTotalEntries})"
-                    break
-                }
-                if (pagesFetched >= config.maxPages) {
-                    completeness = Completeness.TRUNCATED
-                    truncationReason = "MAX_PAGES (limit: ${config.maxPages})"
-                    break
-                }
-
-                val lastTsNs = entries.last().tsNs
-                if (lastTsNs == currentStartNs) {
-                    completeness = Completeness.TRUNCATED
-                    truncationReason = "SAME_TIMESTAMP_OVERFLOW at $lastTsNs ns"
-                    break
-                }
-
-                currentStartNs = lastTsNs
-                boundaryDedupKeys.clear()
-                for (e in entries) {
-                    if (e.tsNs == lastTsNs) {
-                        boundaryDedupKeys += e.dedupKey
-                    }
-                }
-            }
-        } else {
-            var currentEndNs = LokiLogParser.instantToNanos(end)
-            val targetStartNs = LokiLogParser.instantToNanos(start)
-
-            while (pagesFetched < config.maxPages && observations.size < config.maxTotalEntries) {
-                pagesFetched++
-                val entries = executeSinglePage(
-                    query = query.logQl,
-                    startNs = targetStartNs,
                     endNs = currentEndNs,
-                    limit = pageLimit,
+                    limit = effectiveLimit,
                     direction = direction
-                ).sortedWith(compareByDescending<RawStreamEntry> { it.tsNs }.thenBy { it.rawLine })
-
-                totalRaw += entries.size
-                if (entries.isEmpty()) {
+                )
+            } catch (e: LokiQueryException) {
+                if (effectiveLimit > pageLimit && e.statusCode == 400) {
+                    completeness = Completeness.TRUNCATED
+                    truncationReason = "SAME_TIMESTAMP_OVERFLOW at ${boundaryTsNs ?: currentStartNs} ns " +
+                        "(server rejected escalated limit $effectiveLimit)"
                     break
                 }
+                throw e
+            }
 
-                for (entry in entries) {
-                    if (entry.tsNs == currentEndNs && entry.dedupKey in boundaryDedupKeys) {
+            val entries = if (isForward) {
+                rawEntries.sortedWith(
+                    compareBy<RawStreamEntry>(
+                        { it.tsNs },
+                        { it.rawLine },
+                        { canonicalLabelsKey(it.streamLabels) }
+                    )
+                )
+            } else {
+                rawEntries.sortedWith(
+                    compareByDescending<RawStreamEntry> { it.tsNs }
+                        .thenBy { it.rawLine }
+                        .thenBy { canonicalLabelsKey(it.streamLabels) }
+                )
+            }
+
+            totalRaw += entries.size
+            if (entries.isEmpty()) {
+                break
+            }
+
+            val remainingToSkip = boundarySeenCounts.toMutableMap()
+            val acceptedEntries = mutableListOf<RawStreamEntry>()
+            var hitMaxEntriesMidPage = false
+
+            for (entry in entries) {
+                val activeBoundary = boundaryTsNs
+                if (activeBoundary != null) {
+                    val isStale = if (isForward) entry.tsNs < activeBoundary else entry.tsNs > activeBoundary
+                    if (isStale) {
                         duplicatesDropped++
                         continue
                     }
-                    observations += LokiLogParser.parseLine(
-                        rawLine = entry.rawLine,
-                        streamLabels = entry.streamLabels,
-                        defaultTsNs = entry.tsNs
-                    )
-                }
-
-                if (entries.size < pageLimit) {
-                    break
+                    if (entry.tsNs == activeBoundary) {
+                        val key = BoundaryKey(entry.streamLabels, entry.rawLine)
+                        val skipCount = remainingToSkip[key] ?: 0
+                        if (skipCount > 0) {
+                            remainingToSkip[key] = skipCount - 1
+                            duplicatesDropped++
+                            continue
+                        }
+                    }
                 }
 
                 if (observations.size >= config.maxTotalEntries) {
                     completeness = Completeness.TRUNCATED
                     truncationReason = "MAX_ENTRIES (limit: ${config.maxTotalEntries})"
-                    break
-                }
-                if (pagesFetched >= config.maxPages) {
-                    completeness = Completeness.TRUNCATED
-                    truncationReason = "MAX_PAGES (limit: ${config.maxPages})"
+                    hitMaxEntriesMidPage = true
                     break
                 }
 
-                val minTsNs = entries.last().tsNs
-                if (minTsNs == currentEndNs) {
-                    completeness = Completeness.TRUNCATED
-                    truncationReason = "SAME_TIMESTAMP_OVERFLOW at $minTsNs ns"
-                    break
-                }
+                observations += LokiLogParser.parseLine(
+                    rawLine = entry.rawLine,
+                    streamLabels = entry.streamLabels,
+                    defaultTsNs = entry.tsNs
+                )
+                acceptedEntries += entry
+            }
 
-                currentEndNs = minTsNs
-                boundaryDedupKeys.clear()
-                for (e in entries) {
-                    if (e.tsNs == minTsNs) {
-                        boundaryDedupKeys += e.dedupKey
+            if (hitMaxEntriesMidPage) {
+                break
+            }
+
+            if (entries.size < effectiveLimit) {
+                break
+            }
+
+            if (observations.size >= config.maxTotalEntries) {
+                completeness = Completeness.TRUNCATED
+                truncationReason = "MAX_ENTRIES (limit: ${config.maxTotalEntries})"
+                break
+            }
+            if (pagesFetched >= config.maxPages) {
+                completeness = Completeness.TRUNCATED
+                truncationReason = "MAX_PAGES (limit: ${config.maxPages})"
+                break
+            }
+
+            val pageEdgeTsNs = entries.last().tsNs
+            if (acceptedEntries.isEmpty()) {
+                completeness = Completeness.TRUNCATED
+                truncationReason = if (effectiveLimit >= MAX_LOKI_LIMIT) {
+                    "SAME_TIMESTAMP_OVERFLOW at $pageEdgeTsNs ns"
+                } else {
+                    "NO_CURSOR_PROGRESS at $pageEdgeTsNs ns"
+                }
+                break
+            }
+
+            val advanced: Boolean
+            val nextCursorEndNs: Long
+            if (isForward) {
+                advanced = (boundaryTsNs == null && pageEdgeTsNs > currentStartNs) ||
+                    (boundaryTsNs != null && pageEdgeTsNs > boundaryTsNs!!)
+                nextCursorEndNs = currentEndNs
+            } else {
+                nextCursorEndNs = if (pageEdgeTsNs < Long.MAX_VALUE) pageEdgeTsNs + 1 else pageEdgeTsNs
+                advanced = nextCursorEndNs < currentEndNs &&
+                    (boundaryTsNs == null || pageEdgeTsNs < boundaryTsNs!!)
+            }
+
+            if (advanced) {
+                if (isForward) {
+                    currentStartNs = pageEdgeTsNs
+                } else {
+                    currentEndNs = nextCursorEndNs
+                }
+                boundaryTsNs = pageEdgeTsNs
+                boundarySeenCounts.clear()
+                for (accepted in acceptedEntries) {
+                    if (accepted.tsNs == pageEdgeTsNs) {
+                        val key = BoundaryKey(accepted.streamLabels, accepted.rawLine)
+                        boundarySeenCounts[key] = (boundarySeenCounts[key] ?: 0) + 1
                     }
                 }
+                val boundaryCount = boundarySeenCounts.values.sum()
+                if (boundaryCount >= pageLimit) {
+                    if (pageLimit >= MAX_LOKI_LIMIT) {
+                        completeness = Completeness.TRUNCATED
+                        truncationReason = "SAME_TIMESTAMP_OVERFLOW at $pageEdgeTsNs ns"
+                        break
+                    }
+                    effectiveLimit = maxOf(pageLimit * 2, boundaryCount + 1).coerceAtMost(MAX_LOKI_LIMIT)
+                } else {
+                    effectiveLimit = pageLimit
+                }
+            } else {
+                val cursorRegressed = if (isForward) {
+                    pageEdgeTsNs < currentStartNs || (boundaryTsNs != null && pageEdgeTsNs < boundaryTsNs!!)
+                } else {
+                    (boundaryTsNs != null && pageEdgeTsNs > boundaryTsNs!!) || nextCursorEndNs > currentEndNs
+                }
+                if (cursorRegressed) {
+                    completeness = Completeness.TRUNCATED
+                    truncationReason = "NO_CURSOR_PROGRESS at $pageEdgeTsNs ns"
+                    break
+                }
+
+                if (boundaryTsNs == null) {
+                    boundaryTsNs = pageEdgeTsNs
+                    if (!isForward && nextCursorEndNs < currentEndNs) {
+                        currentEndNs = nextCursorEndNs
+                    }
+                }
+                for (accepted in acceptedEntries) {
+                    if (accepted.tsNs == boundaryTsNs) {
+                        val key = BoundaryKey(accepted.streamLabels, accepted.rawLine)
+                        boundarySeenCounts[key] = (boundarySeenCounts[key] ?: 0) + 1
+                    }
+                }
+
+                if (effectiveLimit >= MAX_LOKI_LIMIT) {
+                    completeness = Completeness.TRUNCATED
+                    truncationReason = "SAME_TIMESTAMP_OVERFLOW at $pageEdgeTsNs ns"
+                    break
+                }
+                val boundaryCount = boundarySeenCounts.values.sum()
+                effectiveLimit = maxOf(effectiveLimit * 2, boundaryCount + 1).coerceAtMost(MAX_LOKI_LIMIT)
             }
         }
 
@@ -205,6 +278,9 @@ class LokiQueryClient(
             warnings = warnings
         )
     }
+
+    private fun canonicalLabelsKey(labels: Map<String, String>): String =
+        if (labels.isEmpty()) "" else labels.entries.sortedBy { it.key }.joinToString(",") { "${it.key}=${it.value}" }
 
     private fun executeSinglePage(
         query: String,
