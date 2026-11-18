@@ -8,15 +8,16 @@
 monitoring/
 ├── rules/
 │   └── loki/
-│       └── balletmaster-loki-rules.yaml   # Канонический файл правил Loki Ruler (источник истины)
+│       ├── balletmaster-loki-rules.yaml   # Канонический файл правил Loki Ruler (источник истины)
+│       └── kustomization.yaml             # Каноническая Kustomize-база (ConfigMapGenerator из локального файла правил)
 └── deploy/
     └── k8s/
-        ├── kustomization.yaml             # Kustomize-база (ConfigMapGenerator из rules/loki/)
+        ├── kustomization.yaml             # Kustomize-слой для K8s (подключает ../../rules/loki + общие метки)
         ├── alerting-rule-cr.yaml          # Kubernetes CRD: loki.grafana.com/v1 AlertingRule (Loki Operator)
         └── configmap.yaml                 # Статический ConfigMap для монтирования в loki-ruler / sidecar
 ```
 
-Синхронность правил между каноническим файлом и K8s-манифестами, а также отсутствие high-cardinality меток (`operationId`, `suffix`) в агрегациях автоматически проверяются тестом [`LokiRulesValidationTest`](../loki-query/src/test/kotlin/org/dmg/balletmaster/loki/LokiRulesValidationTest.kt).
+Синхронность правил между каноническим файлом и K8s-манифестами, отсутствие high-cardinality меток (`operationId`, `suffix`) в агрегациях, а также реальная сборка Kustomize (`kustomize build` / `kubectl kustomize` со стандартным `LoadRestrictionsRootOnly`) автоматически проверяются тестом [`LokiRulesValidationTest`](../loki-query/src/test/kotlin/org/dmg/balletmaster/loki/LokiRulesValidationTest.kt).
 
 ---
 
@@ -41,7 +42,17 @@ labels:
       loki_rule: "1"
 ```
 
-Преимущество: `configMapGenerator` формирует `ConfigMap` напрямую из `monitoring/rules/loki/balletmaster-loki-rules.yaml` с хэш-суффиксом для автоматического обновления конфигурации.
+Преимущество: базовая директория `monitoring/rules/loki` формирует `ConfigMap` через `configMapGenerator` напрямую из локального файла `balletmaster-loki-rules.yaml` с хэш-суффиксом для автоматического обновления конфигурации, а `monitoring/deploy/k8s` подключает её как Kustomize resource (`../../rules/loki`) и добавляет общие метки — всё работает со стандартным `--load-restrictor=LoadRestrictionsRootOnly` без дублирования файла правил.
+
+Если общие метки из `monitoring/deploy/k8s` не нужны, можно ссылаться напрямую на базу `monitoring/rules/loki`.
+
+Локальная проверка сборки манифестов:
+
+```bash
+kubectl kustomize monitoring/deploy/k8s
+# или при наличии standalone kustomize:
+kustomize build monitoring/deploy/k8s
+```
 
 ---
 
