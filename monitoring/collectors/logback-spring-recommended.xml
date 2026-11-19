@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!--
+      Balletmaster Recommended Production Logging Profile: Native Flat JSON
+      
+      Requirements:
+        Add dependency: net.logstash.logback:logstash-logback-encoder:7.4 (or 8.x)
+      
+      Why this profile is optimal:
+      - SLF4J 2.0 Key-Value Pairs (storeOp, exception, key, leaseMs, etc.) are flattened into top-level JSON fields.
+      - SLF4J MDC attributes (ballet.operation, ballet.operationId, ballet.step, etc.) are flattened into top-level JSON fields.
+      - Loki's native `| json` parser converts dots to underscores (e.g. ballet.step -> ballet_step).
+      - Loki Ruler alerting rules (sum by (storeOp), sum by (ballet_step)) match directly out-of-the-box.
+      - LogQlQueryBuilder exact operationId filter (`ballet_operationId = "..."`) matches directly.
+      - Zero collector-side transformation is required: Promtail, Alloy, Vector, or Fluent Bit can ship raw lines.
+    -->
+    <appender name="CONSOLE_FLAT_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <timestamp>
+                    <timeZone>UTC</timeZone>
+                    <fieldName>timestamp</fieldName>
+                </timestamp>
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                </loggerName>
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+                <!-- Flattens MDC entries (ballet.operation, ballet.operationId, ballet.step, etc.) to root -->
+                <mdc/>
+                <!-- Flattens SLF4J 2.0 KeyValuePairs (storeOp, exception, key, etc.) to root -->
+                <keyValuePairs/>
+                <stackTrace>
+                    <fieldName>stack_trace</fieldName>
+                    <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                        <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                        <maxLength>2048</maxLength>
+                        <shortenedClassNameLength>20</shortenedClassNameLength>
+                        <rootCauseFirst>true</rootCauseFirst>
+                    </throwableConverter>
+                </stackTrace>
+            </providers>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE_FLAT_JSON"/>
+    </root>
+</configuration>

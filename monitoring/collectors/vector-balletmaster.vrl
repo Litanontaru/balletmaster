@@ -1,0 +1,44 @@
+# Vector Remap Language (VRL) transform for Balletmaster
+# Normalizes standard Logback JsonEncoder output (nested `mdc` and `kvpList`)
+# into flat JSON fields before shipping to Loki.
+
+# Parse message as JSON if still a string
+if is_string(.message) {
+    parsed, err = parse_json(.message)
+    if err == null {
+        . = merge(., parsed)
+    }
+}
+
+# 1. Flatten MDC object into top-level properties (e.g. ballet.operationId -> ballet_operationId)
+if is_object(.mdc) {
+    for_each(object!(.mdc)) -> |k, v| {
+        flat_key = replace(k, ".", "_")
+        .[flat_key] = v
+    }
+    del(.mdc)
+}
+
+# 2. Unpack SLF4J 2.0 KeyValuePairs array (kvpList / keyValuePairs)
+# [{ "storeOp": "CAS" }, { "key": "lock-1" }] -> .storeOp = "CAS", .key = "lock-1"
+if is_array(.kvpList) {
+    for_each(array!(.kvpList)) -> |_index, item| {
+        if is_object(item) {
+            if exists(item.key) && exists(item.value) {
+                flat_key = replace(to_string(item.key), ".", "_")
+                .[flat_key] = item.value
+            } else {
+                for_each(object!(item)) -> |k, v| {
+                    flat_key = replace(k, ".", "_")
+                    .[flat_key] = v
+                }
+            }
+        }
+    }
+    del(.kvpList)
+}
+
+# 3. Normalize standard log field names
+if !exists(.logger) && exists(.logger_name) {
+    .logger = .logger_name
+}

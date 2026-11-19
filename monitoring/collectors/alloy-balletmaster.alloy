@@ -1,0 +1,80 @@
+// Grafana Alloy pipeline for Balletmaster
+// Scrapes application logs and normalizes standard Logback JsonEncoder output
+// (nested `mdc` object and `kvpList` array) into flat Loki structured metadata or labels.
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "balletmaster_pods" {
+  targets = discovery.kubernetes.pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    target_label  = "app"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "environment"
+  }
+}
+
+loki.source.kubernetes "app_logs" {
+  targets    = discovery.relabel.balletmaster_pods.output
+  forward_to = [loki.process.balletmaster.receiver]
+}
+
+loki.process "balletmaster" {
+  forward_to = [loki.write.endpoint.receiver]
+
+  // Stage 1: Parse top-level JSON fields
+  stage.json {
+    expressions = {
+      app         = "app",
+      environment = "environment",
+      logger      = "logger_name",
+      level       = "level",
+      message     = "message",
+      mdc_op_id   = "mdc[\"ballet.operationId\"]",
+      mdc_op      = "mdc[\"ballet.operation\"]",
+      mdc_step    = "mdc[\"ballet.step\"]",
+      mdc_attempt = "mdc[\"ballet.attempt\"]",
+      raw_kvp     = "kvpList",
+    }
+  }
+
+  // Stage 2: Promote correlation fields to Loki Structured Metadata (Loki 3.0+)
+  // This allows exact querying (| ballet_operationId = "...") without high-cardinality label index explosion.
+  stage.structured_metadata {
+    values = {
+      ballet_operationId = "mdc_op_id",
+      ballet_operation   = "mdc_op",
+      ballet_step        = "mdc_step",
+      ballet_attempt     = "mdc_attempt",
+    }
+  }
+
+  // Stage 3: Unpack business/infrastructure attributes from kvpList into structured metadata
+  stage.template {
+    source   = "raw_kvp"
+    template = `{{ range . }}{{ if .storeOp }}storeOp={{ .storeOp }} {{ end }}{{ if .exception }}exception={{ .exception }} {{ end }}{{ end }}`
+  }
+
+  stage.regex {
+    source     = "raw_kvp"
+    expression = "(storeOp=(?P<storeOp>[^ ]+))?( exception=(?P<exception>[^ ]+))?"
+  }
+
+  stage.structured_metadata {
+    values = {
+      storeOp   = "storeOp",
+      exception = "exception",
+    }
+  }
+}
+
+loki.write "endpoint" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -124,5 +124,71 @@ mvn test -Preal-loki
 mvn test -Preal-loki -Dballetmaster.test.loki.url=http://localhost:3100
 ```
 
-1. **JSON-пайплайн (`| json`):** правила рассчитывают, что поля `ballet_step`, `ballet_operation`, `storeOp` и `exception` извлекаются из плоского JSON-лога (через collector / `logstash-logback-encoder`) либо уже перенесены коллектором в Loki structured metadata. Если хост отправляет вложенный массив `kvpList` от Logback `JsonEncoder` без нормализации в коллекторе, добавьте нормализацию полей на уровне коллектора (Alloy / Vector / Fluent Bit) или скорректируйте LogQL-выражение в своём overlay.
+## Формат структурированного логирования и совместимость с Loki
+
+SDK Balletmaster логирует системные события через SLF4J 2.0 Fluent API:
+- Атрибуты корреляции (`ballet.operation`, `ballet.operationId`, `ballet.step`, `ballet.attempt`, `ballet.suffix`, `ballet.replay`) помещаются в SLF4J MDC.
+- Дополнительные структурированные поля (`storeOp`, `exception`, `key`, `leaseMs` и т.д.) передаются через SLF4J Key-Value Pairs (`addKeyValue`).
+
+В зависимости от конфигурации приложения-хоста поддерживаются два production-профиля:
+
+### Профиль 1: Рекомендованный Native Flat JSON (In-Process)
+
+**Конфигурация:** [`collectors/logback-spring-recommended.xml`](collectors/logback-spring-recommended.xml) на базе `net.logstash.logback:logstash-logback-encoder`.
+
+```xml
+<encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+    <providers>
+        <timestamp><timeZone>UTC</timeZone></timestamp>
+        <logLevel/><loggerName/><threadName/><message/>
+        <!-- Сплющивает MDC в корневые поля JSON -->
+        <mdc/>
+        <!-- Сплющивает KeyValuePairs (storeOp, exception) в корневые поля JSON -->
+        <keyValuePairs/>
+        <stackTrace/>
+    </providers>
+</encoder>
+```
+
+**Преимущества:**
+- Все атрибуты попадают в корень JSON (`ballet.step`, `storeOp`, `exception`).
+- Стандартный парсер Loki `| json` заменяет точки на подчёркивания (`ballet.step` -> `ballet_step`) и автоматически делает все поля доступными для агрегаций.
+- Правила Loki Ruler (`sum by (storeOp)`, `sum by (ballet_step)`) работают сразу «из коробки».
+- `LogQlQueryBuilder` (`ballet_operationId = "..."`) находит записи без дополнительных трансформаций.
+- Коллекторы (Promtail, Alloy, Vector, Fluent Bit) передают поток в Loki без сложных пайплайнов перепаковки.
+
+---
+
+### Профиль 2: Стандартный Logback `JsonEncoder` + Нормализация коллектором
+
+Если в приложении используется стандартный `ch.qos.logback.classic.encoder.JsonEncoder` из `logback-classic`:
+- MDC сериализуется во вложенный объект: `"mdc": { "ballet.operationId": "...", "ballet.step": "..." }`.
+- Key-Value Pairs сериализуются во вложенный массив: `"kvpList": [ {"storeOp": "CAS"}, {"key": "..."} ]`.
+
+> [!WARNING]
+> Парсер Loki `| json` автоматически преобразует вложенные объекты в поля с префиксом (`mdc_ballet_operationId`), но **не распаковывает массивы** (`kvpList`). Поэтому поля `storeOp` и `exception` остаются внутри строки массива и не могут использоваться в агрегациях `sum by (storeOp)` в Loki Ruler без предварительной нормализации.
+
+Для этого профиля коллектор логов выполняет распаковку и нормализацию перед отправкой в Loki:
+- **Grafana Alloy:** [`collectors/alloy-balletmaster.alloy`](collectors/alloy-balletmaster.alloy) — использует `stage.json` и `stage.structured_metadata` (Loki 3.0+) для перевода correlation-полей и KVP в Structured Metadata.
+- **Vector (VRL):** [`collectors/vector-balletmaster.vrl`](collectors/vector-balletmaster.vrl) — сплющивает `mdc` и распаковывает массив `kvpList` в плоские поля JSON через Remap Language.
+
+---
+
+### Таблица соответствия атрибутов и меток
+
+| Атрибут Core / SLF4J | Стандартный Logback JsonEncoder | Flat JSON (LogstashEncoder) | Коллектор (Alloy / Vector) | Извлечение в Loki LogQL | Использование в мониторинге |
+|---|---|---|---|---|---|
+| `BalletMdc.OPERATION_ID` (`ballet.operationId`) | `mdc["ballet.operationId"]` | `ballet_operationId` | `ballet_operationId` | `ballet_operationId` / `mdc_ballet_operationId` | Фильтр в `LogQlQueryBuilder` / Investigation Engine |
+| `BalletMdc.OPERATION` (`ballet.operation`) | `mdc["ballet.operation"]` | `ballet_operation` | `ballet_operation` | `ballet_operation` | `sum by (ballet_operation)` в алерте Lease Takeover |
+| `BalletMdc.STEP` (`ballet.step`) | `mdc["ballet.step"]` | `ballet_step` | `ballet_step` | `ballet_step` | `sum by (ballet_step)` в алертах No Call / Step Exception |
+| `BalletMdc.ATTEMPT` (`ballet.attempt`) | `mdc["ballet.attempt"]` | `ballet_attempt` | `ballet_attempt` | `ballet_attempt` | Фильтрация по попытке в `LogQlQueryBuilder` |
+| `BalletMdc.SUFFIX` (`ballet.suffix`) | `mdc["ballet.suffix"]` | `ballet_suffix` | `ballet_suffix` | `ballet_suffix` | Корреляция в Investigation Engine |
+| `storeOp` (KVP) | `kvpList[{"storeOp": "..."}]` | `storeOp` | `storeOp` | `storeOp` | `sum by (storeOp)` в `BalletmasterStoreErrorsHigh` |
+| `exception` (KVP) | `kvpList[{"exception": "..."}]` | `exception` | `exception` | `exception` | `sum by (exception)` в `BalletmasterStepFailureRateSpike` |
+
+---
+
+## Важные замечания по безопасности и производительности
+
+1. **JSON-пайплайн (`| json`):** правила рассчитывают, что поля `ballet_step`, `ballet_operation`, `storeOp` и `exception` извлекаются из плоского JSON-лога (через collector / `logstash-logback-encoder`) либо перенесены коллектором в Loki structured metadata. Если хост отправляет вложенный массив `kvpList` от Logback `JsonEncoder` без нормализации в коллекторе, используйте готовый шаблон из [`collectors/`](collectors/) или переключите хост на рекомендуемый `logback-spring-recommended.xml`.
 2. **Защита от высокой кардинальности:** никогда не добавляйте `ballet_operationId`, `operationId` или `ballet_suffix` в `sum by (...)` и в stream labels `{...}` — это приведёт к взрыву числа серий в Loki Ruler. Для разбора конкретного `operationId` используйте модуль [`loki-query`](../loki-query).
