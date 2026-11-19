@@ -92,7 +92,37 @@ data:
 
 ---
 
-## Замечания по формату логов и кардинальности
+## Локальное окружение Loki и интеграционное тестирование
+
+Для локальной проверки правил, выполнения LogQL-запросов и сквозного тестирования Investigation Engine в директории подготовлен `docker-compose-loki.yml`:
+
+```bash
+# Запуск локального Grafana Loki (порт 3100)
+docker compose -f monitoring/docker-compose-loki.yml up -d
+
+# Проверка готовности
+curl http://localhost:3100/ready
+```
+
+### Запуск интеграционных тестов с реальным Loki
+
+Модули `loki-query` и `investigation-service` содержат интеграционные тесты с реальным движком Loki:
+- `LokiRealQueryIntegrationTest` (`loki-query`): проверяет выполнение реального LogQL, точную фильтрацию по `operationId` (отсечение префиксных коллизий вроде `ord-100` при поиске `ord-1`), разбор потоков и нормализацию.
+- `InvestigationRealLokiIntegrationTest` (`investigation-service`): проверяет полный цикл — генерация структурированных логов `BalletMaster` -> прием логов через push API Loki -> LogQL запрос -> диагностика в `OperationInvestigator` и через REST API.
+
+Интеграционные тесты автоматически обнаруживают работающий Loki:
+1. По параметру `-Dballetmaster.test.loki.url=http://...` или переменной `LOKI_URL`.
+2. На стандартном адресе `http://127.0.0.1:3100`.
+3. Через Testcontainers (если запущен Docker daemon).
+4. Если ни один источник недоступен, тесты пропускаются (`assumeTrue`), не ломая обычную сборку `mvn test`.
+
+Для обязательного выполнения реальных интеграционных проверок (например, в CI) активируйте Maven-профиль `real-loki`:
+
+```bash
+mvn test -Preal-loki
+# или с явным URL:
+mvn test -Preal-loki -Dballetmaster.test.loki.url=http://localhost:3100
+```
 
 1. **JSON-пайплайн (`| json`):** правила рассчитывают, что поля `ballet_step`, `ballet_operation`, `storeOp` и `exception` извлекаются из плоского JSON-лога (через collector / `logstash-logback-encoder`) либо уже перенесены коллектором в Loki structured metadata. Если хост отправляет вложенный массив `kvpList` от Logback `JsonEncoder` без нормализации в коллекторе, добавьте нормализацию полей на уровне коллектора (Alloy / Vector / Fluent Bit) или скорректируйте LogQL-выражение в своём overlay.
 2. **Защита от высокой кардинальности:** никогда не добавляйте `ballet_operationId`, `operationId` или `ballet_suffix` в `sum by (...)` и в stream labels `{...}` — это приведёт к взрыву числа серий в Loki Ruler. Для разбора конкретного `operationId` используйте модуль [`loki-query`](../loki-query).

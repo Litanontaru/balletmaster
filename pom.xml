@@ -94,6 +94,12 @@
                 <version>${logback.version}</version>
                 <scope>test</scope>
             </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers</artifactId>
+                <version>1.18.3</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -144,5 +150,14 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <profile>
+            <id>real-loki</id>
+            <properties>
+                <balletmaster.requireRealLoki>true</balletmaster.requireRealLoki>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>
